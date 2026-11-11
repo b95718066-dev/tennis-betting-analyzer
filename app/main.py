@@ -37,7 +37,7 @@ class PredictionRequest(BaseModel):
     player_odds: float | None = Field(default=None, gt=1)
     opponent_odds: float | None = Field(default=None, gt=1)
 
-    min_ev: float = 0.03
+    min_ev: float = Field(default=0.03, ge=0, le=1)
 
 
 @app.get("/")
