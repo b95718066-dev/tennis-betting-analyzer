@@ -99,3 +99,25 @@ class ProviderMatchLink(Base):
     match_method: Mapped[str] = mapped_column(String(80), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class PredictionRecord(Base):
+    """Auditable prediction ticket; immutable inputs, explicit settlement."""
+    __tablename__ = "prediction_records"
+    __table_args__ = (
+        Index("ix_prediction_status_placed", "status", "placed_at"),
+        Index("ix_prediction_event", "event_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    market: Mapped[str] = mapped_column(String(120), nullable=False, default="match_winner")
+    selection: Mapped[str] = mapped_column(String(180), nullable=False)
+    probability: Mapped[float] = mapped_column(Float, nullable=False)
+    odds_decimal: Mapped[float] = mapped_column(Float, nullable=False)
+    stake: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    outcome: Mapped[bool | None] = mapped_column(Boolean)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    profit: Mapped[float | None] = mapped_column(Float)
