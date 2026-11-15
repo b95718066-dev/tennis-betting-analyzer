@@ -129,6 +129,8 @@ def calculate_live_probabilities(
     in_tiebreak = games_player_1 == games_player_2 == 6
     if not in_tiebreak and (tiebreak_points_player_1 or tiebreak_points_player_2 or tiebreak_first_server is not None):
         raise ValueError("Tiebreak fields are only valid when the set score is 6-6.")
+    if in_tiebreak and (points_player_1 or points_player_2):
+        raise ValueError("At 6-6, use tiebreak_points fields; regular point scores must be zero.")
     if tiebreak_first_server not in (None, 1, 2):
         raise ValueError("tiebreak_first_server must be 1 or 2.")
     tb_first = (tiebreak_first_server or server) if in_tiebreak else 0
