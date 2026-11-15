@@ -20,7 +20,12 @@ jobs:
       - name: Run unit tests
         run: python -m pytest -q
       - name: Check Cito live API connection
-        if: github.event_name == 'push' && secrets.TENNIS_DATA_API_KEY != ''
+        if: github.event_name == 'push'
         env:
           TENNIS_DATA_API_KEY: ${{ secrets.TENNIS_DATA_API_KEY }}
-        run: python -m scripts.check_cito_live
+        run: |
+          if [ -n "$TENNIS_DATA_API_KEY" ]; then
+            python -m scripts.check_cito_live
+          else
+            echo "Cito secret is not configured; skipping live connectivity check."
+          fi
