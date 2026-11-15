@@ -468,7 +468,7 @@ async def analyze_live_match_value_auto(
                     "reason": "Stable Cito player IDs or a supported surface are missing; no identity was guessed.",
                 }
         result["probability_comparison"] = {
-            "live_markov": result["probability_model"]["player_1_match_probability"],
+            "live_markov": (result.get("probability_model") or {}).get("player_1_match_probability"),
             "historical_elo": result["historical_elo_signal"].get("player_win_probability_elo"),
             "combined_probability": None,
             "reason": "Signals remain separate until walk-forward calibration validates an ensemble.",
