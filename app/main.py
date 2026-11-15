@@ -546,6 +546,32 @@ async def get_player_historical_features(
         engine.dispose()
 
 
+
+
+@app.get("/players/{player_id}/historical-stats")
+async def get_player_historical_stats(
+    player_id: str,
+    before: str = Query(description="Exclusive ISO-8601 prediction timestamp"),
+    surface: str | None = Query(default=None, pattern="^(hard|clay|grass|carpet)$"),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    """Aggregate prior Cito serve/return counts without using future match data."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            try:
+                return historical_player_stats(
+                    session, player_id=player_id, before=before,
+                    surface=surface, limit=limit,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        engine.dispose()
+
+
 @app.get("/matches")
 async def stored_matches(
     tour: Tour | None = Query(default=None),
