@@ -214,3 +214,17 @@ Example request body:
 - Date-only archive rows are never scored because their exact start time is unknown; they can update ratings only at the end of their calendar day for subsequent dates. Invalid rows are skipped.
 - ROI/Yield are intentionally not reported: this evaluation does not yet have a verified, timestamped pre-match odds join. It is a model-probability validation, not a profitability claim.
 - The evaluation is limited by whatever historical matches are already stored locally. It is a transparent Elo baseline, not a trained model or evidence of a betting edge.
+
+
+## Sprint 17: integrated live match analysis
+
+The automatic live analysis response combines three independently sourced views: Cito live serve-point counts and confidence intervals; extended live metrics (aces, double faults, break points, return points, and game/point counts); and a fresh linked bookmaker h2h market priced by the live-score Markov model. It also returns an overall/surface historical Elo matchup signal replayed as-of the analysis timestamp when stable Cito player IDs and a supported surface are available.
+
+These signals are intentionally reported side by side. Historical Elo is not blended into the live Markov probability or used to create EV flags until an ensemble passes leakage-safe walk-forward calibration. Missing identities, unsupported metrics, or absent history remain explicitly unavailable. This remains a research/paper-trading tool, not proof of an edge.
+
+
+## Sprint 18: chronological probability calibration
+
+The historical Elo walk-forward endpoint now fits a Platt logistic calibration only on the earlier 60% of its out-of-sample predictions and evaluates the calibrated probabilities on the later 40%, which remains untouched during fitting. The response reports raw Elo and calibrated holdout accuracy, Brier score and log loss, along with the calibration parameters and sample sizes. Calibration is withheld when the training sample is too small or contains only one outcome class.
+
+This is calibration of the Elo baseline, not yet a validated Elo + live-stat ensemble. It does not create bookmaker value flags or ROI. The historical archive currently has no verified timestamped pre-match odds join to the Cito historical match IDs; bookmaker advantage and profitability cannot be measured until that identity/timestamp linkage exists. Do not use in-sample calibration plots as proof of edge.

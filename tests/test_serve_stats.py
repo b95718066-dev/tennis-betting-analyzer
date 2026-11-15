@@ -1,6 +1,6 @@
 import pytest
 
-from app.analytics.serve_stats import normalize_live_serve_rates
+from app.analytics.serve_stats import normalize_live_match_stats, normalize_live_serve_rates
 
 
 def test_normalizes_cito_live_service_point_counts_for_both_players():
@@ -84,3 +84,22 @@ def test_normalizes_cito_flat_live_board_service_points_rows_by_side():
     assert result["ready_for_live_model"] is True
     assert result["serve_point_win_rates"][0]["serve_point_win_rate"] == pytest.approx(18 / 29)
     assert result["serve_point_win_rates"][1]["serve_point_win_rate"] == pytest.approx(11 / 29)
+
+
+def test_normalizes_extended_live_metrics_without_inventing_values():
+    result = normalize_live_match_stats({
+        "stats_available": True,
+        "stats": [
+            {"key": "aces", "side": 1, "numerator": 3},
+            {"key": "double_faults", "side": 2, "numerator": 2},
+            {"key": "break_points_saved", "side": 1, "numerator": 4, "denominator": 5},
+            {"key": "first_return_points_won", "side": 2, "numerator": 7, "denominator": 12},
+            {"key": "unknown_metric", "side": 1, "numerator": 99},
+            {"key": "service_points_won", "side": 1, "numerator": 20, "denominator": 0},
+        ],
+    })
+    assert result["players"][0]["metrics"]["aces"] == {"count": 3}
+    assert result["players"][1]["metrics"]["double_faults"] == {"count": 2}
+    assert result["players"][0]["metrics"]["break_points_saved"]["rate"] == pytest.approx(0.8)
+    assert "unknown_metric" not in result["players"][0]["metrics"]
+    assert "service_points_won" not in result["players"][0]["metrics"]

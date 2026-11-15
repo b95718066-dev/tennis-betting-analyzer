@@ -45,6 +45,67 @@ def _effective_rating(pid: str, surface: str, overall: dict[str, float],
     return base * (1.0 - SURFACE_WEIGHT) + specific * SURFACE_WEIGHT
 
 
+
+def _logit(value: float) -> float:
+    clipped = min(max(value, 1e-6), 1.0 - 1e-6)
+    return log(clipped / (1.0 - clipped))
+
+
+def _fit_platt(train: list[tuple[float, bool]]) -> dict[str, float] | None:
+    """Fit logistic calibration on earlier out-of-sample predictions only."""
+    from math import exp
+    if len(train) < 30 or len({outcome for _, outcome in train}) < 2:
+        return None
+    xs = [_logit(probability) for probability, _ in train]
+    ys = [1.0 if outcome else 0.0 for _, outcome in train]
+    slope, intercept = 1.0, 0.0
+    for _ in range(100):
+        g0 = g1 = h00 = h01 = h11 = 0.0
+        for x, y in zip(xs, ys):
+            z = max(min(intercept + slope * x, 30.0), -30.0)
+            p = 1.0 / (1.0 + exp(-z))
+            w = max(p * (1.0 - p), 1e-9)
+            error = p - y
+            g0 += error
+            g1 += error * x
+            h00 += w
+            h01 += w * x
+            h11 += w * x * x
+        h00 += 1e-6
+        h11 += 1e-6
+        determinant = h00 * h11 - h01 * h01
+        if determinant <= 1e-12:
+            return None
+        d0 = (h11 * g0 - h01 * g1) / determinant
+        d1 = (-h01 * g0 + h00 * g1) / determinant
+        intercept -= d0
+        slope -= d1
+        if abs(d0) + abs(d1) < 1e-7:
+            break
+    if not all(x == x and abs(x) < 100 for x in (slope, intercept)):
+        return None
+    return {"slope": slope, "intercept": intercept}
+
+
+def _apply_platt(probability: float, parameters: dict[str, float]) -> float:
+    from math import exp
+    z = parameters["intercept"] + parameters["slope"] * _logit(probability)
+    return 1.0 / (1.0 + exp(-max(min(z, 30.0), -30.0)))
+
+
+def _score_probabilities(rows: list[tuple[float, bool]]) -> dict[str, float] | None:
+    if not rows:
+        return None
+    n = len(rows)
+    eps = 1e-15
+    return {
+        "matches": n,
+        "accuracy": sum((p >= 0.5) == y for p, y in rows) / n,
+        "brier_score": sum((p - float(y)) ** 2 for p, y in rows) / n,
+        "log_loss": -sum(float(y) * log(max(p, eps)) + (1.0 - float(y)) * log(max(1.0 - p, eps)) for p, y in rows) / n,
+    }
+
+
 def walk_forward_historical_elo(
     session: Session, *, surface: str | None = None,
     min_training_matches: int = 10, calibration_bins: int = 10,
@@ -145,6 +206,25 @@ def walk_forward_historical_elo(
                 counts[p1] += 1
                 counts[p2] += 1
 
+    # Fit on the earlier 60% of out-of-sample predictions; score only the later 40%.
+    split = int(len(predictions) * 0.60)
+    train_predictions, test_predictions = predictions[:split], predictions[split:]
+    platt = _fit_platt(train_predictions)
+    calibrated = [(_apply_platt(p, platt), y) for p, y in test_predictions] if platt else []
+    calibration_evaluation = {
+        "method": "Platt logistic calibration",
+        "chronological_split": "first 60% fit; final 40% untouched evaluation",
+        "training_matches": len(train_predictions),
+        "evaluation_matches": len(test_predictions),
+        "parameters": (
+            {"slope": round(platt["slope"], 6), "intercept": round(platt["intercept"], 6)}
+            if platt else None
+        ),
+        "raw_elo_holdout_metrics": _score_probabilities(test_predictions),
+        "calibrated_elo_holdout_metrics": _score_probabilities(calibrated),
+        "status": "evaluated" if platt is not None and len(test_predictions) >= 10 else
+                  "insufficient_chronological_sample_for_reliable_calibration",
+    }
     if not predictions:
         metrics = None
         calibration = []
@@ -177,6 +257,7 @@ def walk_forward_historical_elo(
         "surface_filter": surface.lower() if surface else None,
         "metrics": metrics,
         "calibration": calibration,
+        "chronological_probability_calibration": calibration_evaluation,
         "coverage": {
             "stored_rows_considered": len(rows),
             "valid_rows": len(usable),
@@ -195,12 +276,15 @@ def walk_forward_historical_elo(
             "same_timestamp": "all matches at an identical timestamp are predicted before any result at that timestamp is applied",
             "date_only_policy": "date-only rows are never scored and update ratings only at end of their calendar day",
             "odds_roi": "not calculated: no verified timestamped pre-match odds join is included",
+            "probability_calibration": "Platt calibration is fitted on the earlier 60% of out-of-sample Elo predictions and scored on the later 40%; this is not an Elo+live-stat ensemble",
         },
         "sample_predictions": prediction_rows[:100],
         "limitations": [
             "This evaluates a transparent Elo baseline, not a trained or calibrated betting model.",
             "Results depend on completeness and selection bias of the locally stored Cito archive.",
-            "No bookmaker baseline, odds ROI, fees, retirement adjustment, inactivity decay or doubles-specific model.",
+            "No verified historical bookmaker baseline or odds ROI; no live-stat ensemble has been validated.",
+            "Platt calibration may be unstable on small archives; evaluate only on the untouched later chronological holdout.",
+            "No fees, retirement adjustment, inactivity decay or doubles-specific model.",
             "Date-only rows are excluded from scoring because their exact pre-match timestamp is unknown.",
         ],
     }
