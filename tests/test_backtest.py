@@ -43,10 +43,8 @@ def test_backtest_is_ordered_by_placement_time_and_tracks_drawdown():
         bet(0, outcome=False),
         bet(1, outcome=False),
     ], initial_bankroll=100.0)
-    curve = result["equity_curve"]
-    assert curve[1]["bankroll"] == pytest.approx(90.0)
-    assert curve[2]["bankroll"] == pytest.approx(80.0)
-    assert curve[3]["bankroll"] == pytest.approx(90.0)
+    settlements = [row for row in result["equity_curve"] if row["event"] == "settle"]
+    assert [row["bankroll"] for row in settlements] == pytest.approx([90.0, 80.0, 90.0])
     assert result["summary"]["max_drawdown"] == pytest.approx(20.0)
     assert result["summary"]["max_drawdown_pct"] == pytest.approx(0.2)
 
