@@ -17,11 +17,12 @@ async def main() -> None:
     except ProviderHttpError as exc:
         # Status code and sanitized message are safe; never print credentials or body.
         code = f"; provider_code={exc.error_code}" if exc.error_code else ""
-        hint = (
-            "; verify the account email in the Cito dashboard"
-            if exc.error_code == "EMAIL_NOT_VERIFIED"
-            else ""
-        )
+        hints = {
+            "EMAIL_NOT_VERIFIED": "; verify the account email in the Cito dashboard",
+            "API_KEY_REVOKED": "; create a new API key in Cito and update the GitHub Actions secret TENNIS_DATA_API_KEY",
+            "INVALID_API_KEY": "; verify the API key in Cito and update the GitHub Actions secret TENNIS_DATA_API_KEY",
+        }
+        hint = hints.get(exc.error_code, "")
         raise SystemExit(
             f"Cito API request failed: HTTP {exc.status_code or 'network-error'}{code}{hint}; {exc}"
         ) from None
