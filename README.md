@@ -2,27 +2,30 @@
 
 A modular ATP/WTA tennis analytics platform for pre-match and live research.
 
-## Current status
+## Project direction
 
-The repository currently contains an initial FastAPI prediction service and analytics modules for Elo, recent form, surface performance, head-to-head records, implied probabilities, bookmaker-margin normalization and expected value. It is **not yet a production betting system**: provider ingestion, persistent history, live odds, backtesting, calibration and the UI remain under development.
+The selected scope is **Hybrid + All**: ATP and WTA coverage, pre-match and in-play analysis, and every market for which a connected provider supplies reliable data. Historical results, live scores, point-by-point feeds and bookmaker odds are separate data capabilities and must be tracked independently.
 
-## Development strategy
+## Current implementation
 
-The project uses a hybrid data strategy:
+- FastAPI prediction endpoint and initial Elo / recent-form / surface / H2H analytics.
+- Decimal odds validation, proportional bookmaker-margin removal and expected-value calculations.
+- Canonical provider-neutral match and odds snapshot contracts.
+- Async HTTPS JSON transport with configurable authentication headers and sanitized upstream errors.
+- Independent environment selection for historical, live-score and odds providers.
+- Unit tests and GitHub Actions test workflow.
 
-- **Historical / development data:** public datasets may be used for prototyping only after checking their provenance and license. Jeff Sackmann-derived ATP/WTA archives are commonly distributed under CC BY-NC-SA 4.0, which is non-commercial and share-alike; they must not be used in a commercial product without appropriate permission and license review.
-- **Operational data:** integrate a licensed provider behind a provider-neutral adapter. Do not hard-code a vendor or place API keys in source control.
-- **Live coverage:** scores, point-by-point data and in-play odds are separate capabilities. Each provider adapter must declare its actual update frequency and market coverage; pre-match odds must never be presented as live odds.
+The provider transport is infrastructure, not a claim that a commercial or free data account is connected. Concrete adapters, ingestion jobs, persistent storage, live market coverage, backtesting, calibration and the dashboard remain planned work.
 
-## Planned modules
+## Hybrid data strategy
 
-1. Provider adapters and normalized ATP/WTA data model
-2. Historical match and player database
-3. Pre-match prediction and market pricing
-4. Live match state and in-play market analysis
-5. Backtesting with time-aware splits and no data leakage
-6. Bet ledger, ROI, yield, drawdown and calibration reports
-7. Web dashboard and monitoring
+- **Historical development data:** use public datasets only after checking provenance and license. Jeff Sackmann-derived ATP/WTA archives are commonly distributed under CC BY-NC-SA 4.0; that license is non-commercial and share-alike. Review the exact source terms before using data in a commercial product.
+- **Operational match data:** add provider-specific adapters behind the canonical contracts. The free tier can be used for prototyping where its quota and coverage are sufficient.
+- **Live scores / point-by-point:** treat as a separate provider capability; record provider timestamps and update delays.
+- **Odds:** connect a licensed odds source independently. Store each bookmaker quote as an immutable timestamped observation. Do not assume a live-score provider also supplies odds.
+- **All markets:** enable only markets actually supplied by the selected provider and validated by the adapter. Never infer unavailable prices.
+
+Provider credentials belong in environment variables or a deployment secret manager. Start from `.env.example`; never commit real keys.
 
 ## Run locally
 
@@ -31,7 +34,6 @@ python -m venv .venv
 # Windows PowerShell:
 .venv\\Scripts\\Activate.ps1
 python -m pip install -r requirements.txt
-python -m pip install pytest
 python -m uvicorn app.main:app --reload
 ```
 
@@ -43,10 +45,15 @@ Run tests:
 python -m pytest -q
 ```
 
-## Configuration and security
+## Next milestones
 
-Provider credentials belong in environment variables (for example, `TENNIS_DATA_API_KEY`) or a deployment secret manager. Never commit real keys, passwords or personal tokens.
+1. Implement concrete historical, live and odds provider adapters.
+2. Persist normalized matches, player identities and odds snapshots in PostgreSQL.
+3. Build market-specific pricing and live-state models.
+4. Add walk-forward backtesting with strict time-based leakage controls.
+5. Track bets, ROI, yield, drawdown, Brier score, log loss and calibration.
+6. Deliver the dashboard and deployment pipeline.
 
 ## Responsible use
 
-Model probabilities are estimates, not guarantees. Do not treat a positive expected value as proof of profitability. Validate every model on out-of-sample historical data and paper-trade before considering real stakes.
+Model probabilities are estimates, not guarantees. A positive expected value is not proof of profitability. Validate models out of sample and paper-trade before considering real stakes.
