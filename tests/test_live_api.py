@@ -95,3 +95,39 @@ async def test_live_probability_endpoint_rejects_invalid_serve_rate():
         })
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_live_sync_persists_matches_and_stored_matches_can_be_read(monkeypatch, tmp_path):
+    class SyncProvider(FakeLiveProvider):
+        async def fetch_live_payload(self, *, tour=None, include_point_history=False):
+            return [{
+                "id": "sync-match-1",
+                "canonical_id": "sync-match-1",
+                "tour": "ATP",
+                "status": "IN_PROGRESS",
+                "scheduled_at": "2026-11-15T18:00:00+00:00",
+                "tournament_name": "Test Open",
+                "surface": "Hard",
+                "best_of": 3,
+                "player1": {"id": "p1", "name": "Player One", "current_game_score": "15", "is_serving": True},
+                "player2": {"id": "p2", "name": "Player Two", "current_game_score": "0", "is_serving": False},
+                "sets": [{"player1_games": 2, "player2_games": 1}],
+                "current_set": 1,
+                "game_score": "15-0",
+                "server": 1,
+            }]
+
+    monkeypatch.setattr(api, "_live_provider", lambda: SyncProvider())
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'live-sync.db'}")
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        sync_response = await client.post("/live/sync?tour=ATP")
+        stored_response = await client.get("/matches?tour=ATP&status=live")
+
+    assert sync_response.status_code == 200
+    assert sync_response.json()["fetched_count"] == 1
+    assert sync_response.json()["persisted_count"] == 1
+    assert stored_response.status_code == 200
+    assert stored_response.json()["count"] == 1
+    assert stored_response.json()["matches"][0]["external_id"] == "sync-match-1"
