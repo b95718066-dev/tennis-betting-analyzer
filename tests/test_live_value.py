@@ -57,6 +57,14 @@ def test_live_analysis_joins_fresh_odds_and_records_value_prediction():
         rows = session.scalars(select(PredictionRecord)).all()
         assert len(rows) == len(result["value_bets"])
         assert all(row.status == "open" and row.stake == 5.0 for row in rows)
+        repeated = analyze_stored_live_match(
+            session, match_id="live-42",
+            player_1_serve_point_win=0.72,
+            player_2_serve_point_win=0.60,
+            min_ev=0.01, stake=5.0,
+        )
+        assert repeated["journal_prediction_ids"] == result["journal_prediction_ids"]
+        assert len(session.scalars(select(PredictionRecord)).all()) == len(result["value_bets"])
 
 
 def test_live_analysis_rejects_stale_odds():
