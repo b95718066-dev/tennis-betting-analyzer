@@ -9,13 +9,13 @@ from app.data.providers.base import ProviderNotImplementedError
 
 
 @pytest.mark.asyncio
-async def test_cito_live_payload_uses_documented_items_envelope_and_auth_header():
+async def test_cito_live_payload_uses_documented_data_envelope_and_auth_header():
     seen = {}
 
     def handler(request: httpx.Request):
         seen["url"] = str(request.url)
         seen["key"] = request.headers.get("x-api-key")
-        return httpx.Response(200, json={"success": True, "items": [{"id": "match-1"}]})
+        return httpx.Response(200, json={"success": True, "data": [{"id": "match-1"}], "meta": {"count": 1}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = CitoTennisProvider(api_key="test-secret", client=client)
@@ -33,7 +33,7 @@ async def test_cito_rejects_unexpected_live_envelope():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = CitoTennisProvider(client=client)
-        with pytest.raises(ValueError, match="items"):
+        with pytest.raises(ValueError, match="data"):
             await provider.fetch_live_payload()
 
 
@@ -44,3 +44,31 @@ async def test_cito_does_not_claim_odds_support():
     assert provider.capabilities.live_odds is False
     with pytest.raises(ProviderNotImplementedError, match="does not currently offer"):
         await provider.get_odds(external_match_id="match-1")
+
+
+
+@pytest.mark.asyncio
+async def test_cito_http_403_preserves_only_machine_readable_error_code():
+    from app.data.providers.http import ProviderHttpError
+
+    def handler(request: httpx.Request):
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "type": "authorization_error",
+                    "message": "Email verification required",
+                    "code": "EMAIL_NOT_VERIFIED",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = CitoTennisProvider(api_key="test-secret", client=client)
+        with pytest.raises(ProviderHttpError) as error:
+            await provider.fetch_live_payload()
+
+    assert error.value.status_code == 403
+    assert error.value.error_code == "EMAIL_NOT_VERIFIED"
+    assert "test-secret" not in str(error.value)
+    assert "Email verification required" not in str(error.value)
