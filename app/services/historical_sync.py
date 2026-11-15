@@ -33,11 +33,26 @@ def persist_historical_rows(
         p1_id = _nested_id(p1)
         p2_id = _nested_id(p2)
         winner_id = _nested_id(winner)
-        # Cito's archive can order the winner as player1. Canonicalize the
-        # two participant slots by stable ID so model outcomes are not biased
-        # by provider presentation order. Keep winner_id tied to the identity.
+        raw_snapshot = dict(row)
+        # Cito's archive can order the winner as player1. Canonicalize slots
+        # by stable ID, swapping all side-specific raw stats with them.
         if p1_id and p2_id and p2_id < p1_id:
             p1_id, p2_id = p2_id, p1_id
+            raw_snapshot["player1"], raw_snapshot["player2"] = (
+                raw_snapshot.get("player2"), raw_snapshot.get("player1")
+            )
+            stats = raw_snapshot.get("stats")
+            if isinstance(stats, list):
+                swapped_stats = []
+                for item in stats:
+                    if isinstance(item, dict):
+                        item = dict(item)
+                        for left, right in (("player1", "player2"), ("player_1", "player_2"),
+                                            ("side1", "side2"), ("side_1", "side_2")):
+                            if left in item or right in item:
+                                item[left], item[right] = item.get(right), item.get(left)
+                    swapped_stats.append(item)
+                raw_snapshot["stats"] = swapped_stats
         # Some archive rows carry winner_id directly.
         if winner_id is None and row.get("winner_id") is not None:
             winner_id = str(row["winner_id"])
@@ -69,7 +84,7 @@ def persist_historical_rows(
             "winner_id": winner_id,
             "stats_available": stats_available,
             "stats_unavailable_code": str(stats_code)[:120] if stats_code else None,
-            "raw": row,
+            "raw": raw_snapshot,
         }
         if existing is None:
             session.add(HistoricalMatchSnapshot(
