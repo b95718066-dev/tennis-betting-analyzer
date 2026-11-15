@@ -56,8 +56,8 @@ python -m pytest -q
 2. Add Alembic migrations and a scheduled ingestion worker with rate-limit-aware checkpoints.
 3. Persist player identity, tournament and market catalogs.
 4. Build market-specific pricing and live-state models.
-5. Add walk-forward backtesting with strict time-based leakage controls.
-6. Track bets, ROI, yield, drawdown, Brier score, log loss and calibration.
+5. Expand the Sprint 5 backtest engine with walk-forward model retraining, market-specific benchmarks and transaction-cost models.
+6. Track additional market-level metrics and persist prediction snapshots and settled bet ledgers.
 7. Deliver the dashboard and deployment pipeline.
 
 ## Responsible use
@@ -76,3 +76,12 @@ When `TENNIS_LIVE_PROVIDER=cito` and `TENNIS_DATA_API_KEY` are configured:
 - `GET /live/{match_id}` returns detailed live state for one match.
 
 The live routes return provider payloads without guessing player identity or score mappings. Provider errors are surfaced as sanitized HTTP 502 responses; a missing API key returns HTTP 503. Cito documents a free allowance of 500 requests/month and approximately 60-second live-data delay on Free and Starter plans; confirm current limits and plan terms in the provider dashboard before production use.
+
+
+## Sprint 5: backtesting and model evaluation
+
+The `POST /backtest` endpoint evaluates a supplied list of already-generated predictions against settled outcomes. Each item includes `event_id`, `selection`, model `probability`, executable decimal `odds_decimal`, boolean `outcome`, `stake`, timezone-aware `placed_at` and `settled_at`. The request may also include `initial_bankroll` and `calibration_bins`.
+
+The engine processes placement and settlement events chronologically, reserves stake when a bet is placed, and does not reuse cash tied up in overlapping matches. It reports net profit, bankroll ROI, stake yield, hit rate, average odds, maximum drawdown, Brier score, log loss, calibration buckets and an equity curve. Bets that cannot be funded from available bankroll are skipped and counted.
+
+ROI is net profit divided by initial bankroll; yield is net profit divided by executed stake. Fees, taxes, slippage and cash-out are not yet modelled. This is an evaluation framework, not proof of profitability: predictions must be generated using information available before each placement timestamp. Use chronological splits, not random train/test splits; `chronological_split` provides a simple time-ordered split helper. Calibration and scoring metrics apply to executed selections only.

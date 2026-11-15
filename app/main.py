@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .analytics.prediction import predict_match
+from .analytics.backtest import BacktestBet, run_backtest
 from .analytics.probability import remove_margin, expected_value, value_bet
 from .data.config import ProviderSettings, build_live_provider
 from .data.models import Tour
@@ -15,6 +16,12 @@ app = FastAPI(
     description="Advanced tennis analytics and prediction API",
     version="0.2.0",
 )
+
+
+class BacktestRequest(BaseModel):
+    bets: list[BacktestBet] = Field(min_length=1)
+    initial_bankroll: float = Field(default=1000.0, gt=0, allow_inf_nan=False)
+    calibration_bins: int = Field(default=10, ge=2, le=50)
 
 
 class PredictionRequest(BaseModel):
@@ -165,5 +172,19 @@ async def predict(request: PredictionRequest):
                 ),
             }
         return result
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+
+@app.post("/backtest")
+async def backtest(request: BacktestRequest):
+    """Evaluate chronological, already-generated predictions against settled results."""
+    try:
+        return run_backtest(
+            request.bets,
+            initial_bankroll=request.initial_bankroll,
+            calibration_bins=request.calibration_bins,
+        )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
