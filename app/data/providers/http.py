@@ -11,9 +11,16 @@ import httpx
 class ProviderHttpError(RuntimeError):
     """Sanitized provider request error; credentials are never included."""
 
-    def __init__(self, provider: str, status_code: int | None, message: str):
+    def __init__(
+        self,
+        provider: str,
+        status_code: int | None,
+        message: str,
+        error_code: str | None = None,
+    ):
         self.provider = provider
         self.status_code = status_code
+        self.error_code = error_code
         super().__init__(f"{provider}: {message}")
 
 
@@ -64,7 +71,24 @@ class HttpJsonProvider:
                 raise ProviderHttpError(self.name, response.status_code, "unexpected JSON response shape")
             return payload
         except httpx.HTTPStatusError as exc:
-            raise ProviderHttpError(self.name, exc.response.status_code, "upstream returned an HTTP error") from exc
+            # Preserve only the provider's machine-readable error code. Never log
+            # response bodies, request headers, or credentials.
+            error_code = None
+            try:
+                body = exc.response.json()
+                error = body.get("error") if isinstance(body, dict) else None
+                if isinstance(error, dict) and isinstance(error.get("code"), str):
+                    error_code = error["code"][:100]
+                elif isinstance(body, dict) and isinstance(body.get("code"), str):
+                    error_code = body["code"][:100]
+            except ValueError:
+                pass
+            raise ProviderHttpError(
+                self.name,
+                exc.response.status_code,
+                "upstream returned an HTTP error",
+                error_code=error_code,
+            ) from exc
         except httpx.TimeoutException as exc:
             raise ProviderHttpError(self.name, None, "request timed out") from exc
         except httpx.RequestError as exc:
