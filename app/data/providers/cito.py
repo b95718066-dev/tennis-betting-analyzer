@@ -1,0 +1,81 @@
+"""Cito Tennis API adapter.
+
+This adapter deliberately preserves the provider payload. The upstream API does
+not currently offer bookmaker odds, and its live feed has provider-specific
+fields; canonical MatchRecord normalization is kept separate until every field
+mapping is covered by contract tests.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from app.data.models import Tour
+from .http import HttpJsonProvider
+
+
+@dataclass(frozen=True)
+class CitoCapabilities:
+    live_scores: bool = True
+    historical_matches: bool = True
+    point_by_point: bool = True
+    pre_match_odds: bool = False
+    live_odds: bool = False
+
+
+class CitoTennisProvider(HttpJsonProvider):
+    """Read-only client for Cito's Tennis API (server-side API key only)."""
+
+    PROVIDER_NAME = "cito"
+    DEFAULT_BASE_URL = "https://api.citoapi.com/api/v1/tennis"
+    capabilities = CitoCapabilities()
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        timeout_seconds: float = 15.0,
+        client=None,
+    ) -> None:
+        super().__init__(
+            name=self.PROVIDER_NAME,
+            base_url=self.DEFAULT_BASE_URL,
+            api_key=api_key,
+            api_key_header="x-api-key",
+            api_key_prefix="",
+            timeout_seconds=timeout_seconds,
+            client=client,
+        )
+
+    async def fetch_live_payload(self, *, tour: Tour | None = None) -> list[dict[str, Any]]:
+        """Return raw live rows without guessing provider-to-domain field mappings."""
+        params = {"tour": tour.value} if tour in (Tour.ATP, Tour.WTA) else None
+        payload = await self.get_json("matches/live", params=params)
+        if not isinstance(payload, dict):
+            raise ValueError("Cito live response must be a JSON object.")
+        rows = payload.get("items")
+        if not isinstance(rows, list):
+            raise ValueError("Cito live response is missing the documented 'items' list.")
+        if not all(isinstance(row, dict) for row in rows):
+            raise ValueError("Cito live response contains a non-object match row.")
+        return rows
+
+    async def fetch_match_detail(self, match_id: str) -> dict[str, Any]:
+        """Fetch one provider match detail; match_id is URL-encoded as one path segment."""
+        from urllib.parse import quote
+
+        if not match_id or "/" in match_id or match_id in {".", ".."}:
+            raise ValueError("match_id must be a non-empty provider ID.")
+        payload = await self.get_json(f"matches/{quote(match_id, safe='')}")
+        if not isinstance(payload, dict):
+            raise ValueError("Cito match detail must be a JSON object.")
+        return payload
+
+    async def get_odds(self, *, external_match_id: str, live_only: bool = False):
+        """Cito currently documents no bookmaker odds endpoint."""
+        from app.data.providers.base import ProviderNotImplementedError
+
+        raise ProviderNotImplementedError(
+            "Cito does not currently offer pre-match or live bookmaker odds."
+        )
