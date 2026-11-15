@@ -71,3 +71,27 @@ def test_live_probability_rejects_partial_odds_pair():
 def test_live_probability_rejects_invalid_score_or_parameters(invalid):
     with pytest.raises(ValueError):
         calculate_live_probabilities(**base_state(**invalid))
+
+def test_live_probability_handles_deuce_in_extended_tiebreak():
+    result = calculate_live_probabilities(**base_state(
+        games_player_1=6,
+        games_player_2=6,
+        server=1,
+        tiebreak_first_server=1,
+        tiebreak_points_player_1=6,
+        tiebreak_points_player_2=6,
+    ))
+
+    assert 0 < result["player_1_current_game_probability"] < 1
+    assert result["player_1_match_probability"] + result["player_2_match_probability"] == pytest.approx(1.0)
+
+
+def test_live_probability_requires_separate_tiebreak_score_at_six_all():
+    with pytest.raises(ValueError, match="regular point scores must be zero"):
+        calculate_live_probabilities(**base_state(
+            games_player_1=6,
+            games_player_2=6,
+            points_player_1=1,
+            server=1,
+            tiebreak_first_server=1,
+        ))
