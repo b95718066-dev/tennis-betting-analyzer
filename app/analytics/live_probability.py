@@ -40,6 +40,15 @@ def _validate_point_state(p1: int, p2: int) -> None:
         raise ValueError("Advantage can only occur at 4-3 or 3-4.")
 
 
+def _tiebreak_deuce_probability(first_server: int, p1_serve: float, p2_serve: float) -> float:
+    first_point_p1 = p1_serve if first_server == 1 else 1.0 - p2_serve
+    second_server = 3 - first_server
+    second_point_p1 = p1_serve if second_server == 1 else 1.0 - p2_serve
+    p1_wins_pair = first_point_p1 * second_point_p1
+    p2_wins_pair = (1.0 - first_point_p1) * (1.0 - second_point_p1)
+    return p1_wins_pair / (p1_wins_pair + p2_wins_pair)
+
+
 def _game_win_probability(
     p1: int, p2: int, server: int, p1_serve: float, p2_serve: float
 ) -> float:
@@ -146,6 +155,13 @@ def calculate_live_probabilities(
                             current_server, 0, 0)
 
         if tb_first_server:
+            if tb1 == tb2 and tb1 >= 6:
+                p_tb = _tiebreak_deuce_probability(
+                    tb_first_server, player_1_serve_point_win, player_2_serve_point_win
+                )
+                win_if_p1 = match_dp(s1 + 1, s2, 0, 0, 0, 0, 3 - tb_first_server, 0, 0, 0)
+                win_if_p2 = match_dp(s1, s2 + 1, 0, 0, 0, 0, 3 - tb_first_server, 0, 0, 0)
+                return p_tb * win_if_p1 + (1.0 - p_tb) * win_if_p2
             played = tb1 + tb2
             if played == 0:
                 tb_server = tb_first_server
@@ -259,6 +275,8 @@ def _calculate_set_probability(
         if a == 6 and b == 6 and tb_first == 0:
             return solve(a, b, 0, 0, srv, srv, 0, 0)
         if tb_first:
+            if tb_a == tb_b and tb_a >= 6:
+                return _tiebreak_deuce_probability(tb_first, p1_serve, p2_serve)
             n = tb_a + tb_b
             tb_srv = tb_first if n == 0 or ((n - 1) // 2) % 2 == 1 else 3 - tb_first
             p = p1_serve if tb_srv == 1 else 1.0 - p2_serve
@@ -311,6 +329,8 @@ def _calculate_tiebreak_probability(
             return 1.0
         if b >= 7 and b - a >= 2:
             return 0.0
+        if a == b and a >= 6:
+            return _tiebreak_deuce_probability(first_server, p1_serve, p2_serve)
         played = a + b
         if played == 0:
             srv = first_server
