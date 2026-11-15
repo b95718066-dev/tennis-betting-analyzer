@@ -201,3 +201,55 @@ async def test_odds_sync_persists_and_links_bookmaker_snapshots(monkeypatch, tmp
     assert body["events_unmatched_to_cito"] == 0
     assert match_odds_response.status_code == 200
     assert match_odds_response.json()["count"] == 2
+
+
+
+@pytest.mark.asyncio
+async def test_auto_live_analysis_uses_cito_serve_rates(monkeypatch, tmp_path):
+    class StatsProvider(FakeLiveProvider):
+        async def fetch_live_stats_detail(self, match_id):
+            assert match_id == "auto-match"
+            return {
+                "stats_available": True,
+                "stats": {
+                    "player1": {"service_points_won": 24, "service_points_played": 35},
+                    "player2": {"service_points_won": 18, "service_points_played": 30},
+                },
+            }
+
+    captured = {}
+
+    def fake_analyze(session, **kwargs):
+        captured.update(kwargs)
+        return {"event_id": kwargs["match_id"], "value_bets": []}
+
+    monkeypatch.setattr(api, "_live_provider", lambda: StatsProvider())
+    monkeypatch.setattr(api, "analyze_stored_live_match", fake_analyze)
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'auto-live.db'}")
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/matches/auto-match/analyze-live/auto", json={
+            "min_ev": 0.04, "stake": 3.0, "auto_record": False,
+        })
+
+    assert response.status_code == 200
+    assert captured["player_1_serve_point_win"] == pytest.approx(24 / 35)
+    assert captured["player_2_serve_point_win"] == pytest.approx(18 / 30)
+    assert captured["stake"] == 3.0
+    assert response.json()["serve_point_win_rates_source"] == "cito_live_match_stats"
+
+
+@pytest.mark.asyncio
+async def test_auto_live_analysis_refuses_missing_cito_serve_stats(monkeypatch, tmp_path):
+    class StatsProvider(FakeLiveProvider):
+        async def fetch_live_stats_detail(self, match_id):
+            return {"stats_available": False, "stats_unavailable_code": "stats_pending", "stats": []}
+
+    monkeypatch.setattr(api, "_live_provider", lambda: StatsProvider())
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'auto-live-missing.db'}")
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/matches/auto-match/analyze-live/auto", json={})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["statistics"]["stats_unavailable_code"] == "stats_pending"
