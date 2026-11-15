@@ -68,6 +68,13 @@ def _game_win_probability(
 
     @lru_cache(maxsize=None)
     def solve(a: int, b: int) -> float:
+        if a >= 3 and b >= 3:
+            if a == b == 3:
+                return deuce_win
+            if a == 4 and b == 3:
+                return p1_point + (1.0 - p1_point) * deuce_win
+            if a == 3 and b == 4:
+                return p1_point * deuce_win
         next_p1 = _point_result(a, b, 1)
         next_p2 = _point_result(a, b, 2)
         win_if_p1 = 1.0 if next_p1 is None else solve(*next_p1)
