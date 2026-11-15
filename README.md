@@ -112,3 +112,12 @@ The optional `the_odds_api` adapter uses a separate `THE_ODDS_API_KEY` and does 
 The adapter converts only bookmaker outcomes actually returned into timestamped decimal `OddsSnapshot` records. Market lines are retained in the market identifier, and repeated identical observations are deduplicated. `GET /providers` reports configured odds capabilities.
 
 **Coverage limitation:** The Odds API currently lists selected Grand Slams, ATP 1000/500 and WTA 1000/500 tournaments. Tennis coverage is mainly match-winner odds, with limited game spreads and totals from selected bookmakers. This is not full ATP/WTA tour coverage or every tennis market. Odds event IDs are provider-specific and are never treated as Cito IDs. The ingestion service now creates an explicit cross-provider link only when both player names match exactly (accent/punctuation normalized), the scheduled start is within 24 hours, and there is exactly one candidate. Ambiguous or incomplete events remain unlinked. Retrieve linked quotes with `GET /matches/{cito_external_match_id}/odds`.
+
+
+## Sprint 7: prediction journal
+
+- `POST /predictions` records an auditable prediction snapshot: event, market, selection, model probability, decimal price, stake and timezone-aware placement time. Inputs are retained as placed; later odds changes do not overwrite the record.
+- `GET /predictions?status=open` lists open records; use `status=settled` for completed records.
+- `POST /predictions/{id}/settle?outcome=true` settles a record once. Duplicate settlement returns HTTP 409; unknown IDs return HTTP 404.
+- `GET /predictions/metrics` reports settled-only hit rate, ROI, yield, net profit, Brier score and maximum drawdown. With no settled records, it explicitly reports that metrics are unavailable.
+- Journal ROI and yield are both net profit divided by total recorded stake. Metrics exclude fees, taxes, slippage and cash-out. The journal stores a probability snapshot but does not yet auto-generate predictions or place bets.
