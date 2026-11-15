@@ -115,7 +115,7 @@ async def live_matches(
 async def live_match_detail(match_id: str):
     provider = _live_provider()
     try:
-        detail = await provider.fetch_match_detail(match_id)
+        detail = await provider.fetch_live_match_detail(match_id)
     except ProviderHttpError as error:
         raise HTTPException(
             status_code=502,
