@@ -42,11 +42,10 @@ def _side_stats(stats: Any, side: int) -> tuple[float, float] | None:
     if isinstance(stats, dict):
         for name in side_names:
             if name in stats:
-                found = _find_serve_pair(stats[name])
-                if found:
-                    return found
-        # Some responses wrap both sides under a stats object keyed by side.
-        return _find_serve_pair(stats)
+                # Do not fall back to another player's valid metric when this side
+                # is missing or internally inconsistent.
+                return _find_serve_pair(stats[name])
+        return None
     if isinstance(stats, list):
         for row in stats:
             if not isinstance(row, dict):
