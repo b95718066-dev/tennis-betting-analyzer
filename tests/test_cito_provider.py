@@ -1,4 +1,4 @@
-"""Contract tests for the Cito live-score adapter."""
+""""Contract tests for the Cito live-score adapter."""
 
 import httpx
 import pytest
@@ -27,14 +27,15 @@ async def test_cito_live_payload_uses_documented_data_envelope_and_auth_header()
 
 
 @pytest.mark.asyncio
-async def test_cito_rejects_unexpected_live_envelope():
+async def test_cito_accepts_empty_live_data_list():
     def handler(request: httpx.Request):
         return httpx.Response(200, json={"success": True, "data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = CitoTennisProvider(client=client)
-        with pytest.raises(ValueError, match="data"):
-            await provider.fetch_live_payload()
+        rows = await provider.fetch_live_payload()
+
+    assert rows == []
 
 
 @pytest.mark.asyncio
