@@ -184,3 +184,13 @@ Example request body:
 - `GET /players/{player_id}/historical-features?before=2026-06-01T12:00:00Z&surface=clay&limit=20` calculates recent match win/loss features using only archive rows strictly before the cutoff. Date-only rows are excluded for the same calendar day because their time is unknown.
 - The historical store preserves raw Cito statistics verbatim. Match win rate is not substituted for serve-point win rate; structured serve/return aggregation and point-in-time odds features remain follow-up work.
 - This is the storage and feature foundation for walk-forward evaluation, not yet an automatically trained/retrained historical prediction model. The existing `/backtest` still evaluates supplied pre-generated predictions.
+
+
+## Sprint 13: historical serve and return aggregation
+
+- `GET /players/{player_id}/historical-stats?before=2026-06-01T12:00:00Z&surface=clay&limit=200` aggregates the player's stored Cito match-stat count pairs strictly before the exclusive cutoff.
+- Service-point and return-point rates are computed as summed numerators divided by summed denominators; match-level percentages and display strings are ignored.
+- Player-side mapping uses the stored Cito player IDs. Surface filtering is optional; all-court aggregation is used when omitted.
+- Each available service/return win metric includes a 95% Wilson interval and sample-size diagnostic. Missing or invalid count pairs and zero denominators remain unavailable.
+- Date-only rows from the cutoff calendar day are excluded. Timestamped rows must be strictly earlier than the cutoff.
+- This endpoint is descriptive historical evidence only. It does not silently blend historical rates into the live model; any shrinkage or weighting requires separate chronological validation.
