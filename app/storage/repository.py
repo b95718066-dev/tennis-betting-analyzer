@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data.models import MatchRecord, OddsSnapshot
-from .models import OddsObservation, ProviderSyncState, TennisMatch
+from .models import OddsObservation, ProviderMatchLink, ProviderSyncState, TennisMatch
 
 
 def save_match(session: Session, record: MatchRecord) -> TennisMatch:
@@ -96,3 +96,40 @@ def update_sync_state(
     state.last_error = last_error[:500] if last_error else None
     session.flush()
     return state
+
+
+
+def save_provider_match_link(
+    session: Session,
+    *,
+    source_provider: str,
+    source_external_id: str,
+    canonical_provider: str,
+    canonical_external_id: str,
+    match_method: str,
+    confidence: float = 1.0,
+) -> ProviderMatchLink:
+    """Create or refresh a deterministic cross-provider identity link."""
+    link = session.scalar(
+        select(ProviderMatchLink).where(
+            ProviderMatchLink.source_provider == source_provider,
+            ProviderMatchLink.source_external_id == source_external_id,
+        )
+    )
+    if link is None:
+        link = ProviderMatchLink(
+            source_provider=source_provider,
+            source_external_id=source_external_id,
+            canonical_provider=canonical_provider,
+            canonical_external_id=canonical_external_id,
+            match_method=match_method,
+            confidence=confidence,
+        )
+        session.add(link)
+    else:
+        link.canonical_provider = canonical_provider
+        link.canonical_external_id = canonical_external_id
+        link.match_method = match_method
+        link.confidence = confidence
+    session.flush()
+    return link
