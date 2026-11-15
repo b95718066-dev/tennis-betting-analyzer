@@ -91,3 +91,12 @@ The `POST /backtest` endpoint evaluates a supplied list of already-generated pre
 The engine processes placement and settlement events chronologically, reserves stake when a bet is placed, and does not reuse cash tied up in overlapping matches. It reports net profit, bankroll ROI, stake yield, hit rate, average odds, maximum drawdown, Brier score, log loss, calibration buckets and an equity curve. Bets that cannot be funded from available bankroll are skipped and counted.
 
 ROI is net profit divided by initial bankroll; yield is net profit divided by executed stake. Fees, taxes, slippage and cash-out are not yet modelled. This is an evaluation framework, not proof of profitability: predictions must be generated using information available before each placement timestamp. Use chronological splits, not random train/test splits; `chronological_split` provides a simple time-ordered split helper. Calibration and scoring metrics apply to executed selections only.
+
+
+## Sprint 6: live ingestion and persistence
+
+- `POST /live/sync?tour=ATP` (or `WTA`) fetches the configured Cito live board, normalizes rows with known player/tour identity and idempotently upserts them into the configured database.
+- `GET /matches?tour=ATP&status=live&limit=100` reads the stored canonical match records. Supported filters are tour, status and a limit from 1 to 500.
+- The sync response reports fetched, persisted and unmapped row counts. Provider-specific live fields remain in the stored raw payload; unknown or incomplete rows are skipped rather than assigned invented player identities.
+- This first ingestion slice initializes the current SQLAlchemy schema on demand for local development. Production deployments should apply versioned Alembic migrations and use a managed database before enabling scheduled sync.
+- Syncing Cito does not create odds or serve statistics. Those remain separate provider integrations and required model inputs.
