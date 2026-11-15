@@ -19,10 +19,10 @@ async def test_cito_live_payload_uses_documented_items_envelope_and_auth_header(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = CitoTennisProvider(api_key="test-secret", client=client)
-        rows = await provider.fetch_live_payload(tour=Tour.ATP)
+        rows = await provider.fetch_live_payload(tour=Tour.ATP, include_point_history=True)
 
     assert rows == [{"id": "match-1"}]
-    assert seen["url"].endswith("/matches/live?tour=ATP")
+    assert seen["url"].endswith("/matches/live?tour=ATP&include=point_history")
     assert seen["key"] == "test-secret"
 
 
