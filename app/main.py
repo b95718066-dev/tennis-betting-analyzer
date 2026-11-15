@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from .analytics.prediction import predict_match
 from .analytics.backtest import BacktestBet, run_backtest
+from .analytics.walk_forward import walk_forward_historical_elo
 from .analytics.probability import remove_margin, expected_value, value_bet
 from .analytics.live_probability import calculate_live_probabilities
 from .analytics.serve_stats import normalize_live_serve_rates
@@ -591,6 +592,30 @@ async def get_historical_elo_matchup(
                 return historical_elo_ratings(
                     session, player_id=player_id, opponent_id=opponent_id,
                     before=before, surface=surface,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        engine.dispose()
+
+
+@app.get("/backtest/historical-elo")
+async def backtest_historical_elo(
+    surface: str | None = Query(default=None, pattern="^(hard|clay|grass|carpet)$"),
+    min_training_matches: int = Query(default=10, ge=1, le=1000),
+    calibration_bins: int = Query(default=10, ge=2, le=50),
+):
+    """Run expanding-window Elo evaluation using stored history only."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            try:
+                return walk_forward_historical_elo(
+                    session, surface=surface,
+                    min_training_matches=min_training_matches,
+                    calibration_bins=calibration_bins,
                 )
             except ValueError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
