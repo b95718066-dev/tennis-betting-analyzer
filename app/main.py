@@ -1,4 +1,5 @@
 from typing import Any
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -16,7 +17,7 @@ from .data.providers.http import ProviderHttpError
 from .services.live_sync import persist_live_rows
 from .services.odds_sync import persist_odds_events
 from .storage.database import build_engine, create_schema
-from .storage.models import OddsObservation, ProviderMatchLink, TennisMatch
+from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, TennisMatch
 from .storage.repository import save_odds_snapshot
 
 
@@ -50,6 +51,16 @@ class LiveProbabilityRequest(BaseModel):
     player_1_odds: float | None = Field(default=None, gt=1)
     player_2_odds: float | None = Field(default=None, gt=1)
     min_ev: float = Field(default=0.03, ge=0, le=1)
+
+
+class PredictionJournalRequest(BaseModel):
+    event_id: str = Field(min_length=1, max_length=180)
+    market: str = Field(default="match_winner", min_length=1, max_length=120)
+    selection: str = Field(min_length=1, max_length=180)
+    probability: float = Field(ge=0, le=1, allow_inf_nan=False)
+    odds_decimal: float = Field(gt=1, allow_inf_nan=False)
+    stake: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    placed_at: datetime | None = None
 
 
 class PredictionRequest(BaseModel):
@@ -404,6 +415,114 @@ async def predict(request: PredictionRequest):
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
+
+
+@app.post("/predictions", status_code=201)
+async def create_prediction_record(request: PredictionJournalRequest):
+    placed_at = request.placed_at or datetime.now(timezone.utc)
+    if placed_at.tzinfo is None or placed_at.utcoffset() is None:
+        raise HTTPException(status_code=422, detail="placed_at must include a timezone.")
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            row = PredictionRecord(
+                event_id=request.event_id, market=request.market,
+                selection=request.selection, probability=request.probability,
+                odds_decimal=request.odds_decimal, stake=request.stake,
+                placed_at=placed_at.astimezone(timezone.utc), status="open",
+            )
+            session.add(row)
+            session.flush()
+            return {"id": row.id, "event_id": row.event_id, "market": row.market,
+                    "selection": row.selection, "probability": row.probability,
+                    "odds_decimal": row.odds_decimal, "stake": row.stake,
+                    "placed_at": row.placed_at.isoformat(), "status": row.status}
+    finally:
+        engine.dispose()
+
+
+@app.get("/predictions")
+async def list_prediction_records(status: str | None = Query(default=None, pattern="^(open|settled)$"), limit: int = Query(default=100, ge=1, le=500)):
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            statement = select(PredictionRecord).order_by(PredictionRecord.placed_at.desc()).limit(limit)
+            if status:
+                statement = statement.where(PredictionRecord.status == status)
+            rows = session.scalars(statement).all()
+            return {"count": len(rows), "predictions": [
+                {"id": row.id, "event_id": row.event_id, "market": row.market,
+                 "selection": row.selection, "probability": row.probability,
+                 "odds_decimal": row.odds_decimal, "stake": row.stake,
+                 "placed_at": row.placed_at.isoformat(), "status": row.status,
+                 "outcome": row.outcome, "settled_at": row.settled_at.isoformat() if row.settled_at else None,
+                 "profit": row.profit} for row in rows
+            ]}
+    finally:
+        engine.dispose()
+
+
+@app.post("/predictions/{prediction_id}/settle")
+async def settle_prediction_record(prediction_id: int, outcome: bool):
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            row = session.get(PredictionRecord, prediction_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Prediction not found.")
+            if row.status == "settled":
+                raise HTTPException(status_code=409, detail="Prediction is already settled.")
+            row.outcome = outcome
+            row.status = "settled"
+            row.settled_at = datetime.now(timezone.utc)
+            row.profit = round(row.stake * (row.odds_decimal - 1), 8) if outcome else -row.stake
+            return {"id": row.id, "status": row.status, "outcome": row.outcome,
+                    "settled_at": row.settled_at.isoformat(), "profit": row.profit}
+    finally:
+        engine.dispose()
+
+
+@app.get("/predictions/metrics")
+async def prediction_journal_metrics():
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            rows = session.scalars(
+                select(PredictionRecord).where(PredictionRecord.status == "settled")
+                .order_by(PredictionRecord.settled_at.asc(), PredictionRecord.id.asc())
+            ).all()
+            open_count = session.query(PredictionRecord).filter_by(status="open").count()
+            if not rows:
+                return {"settled": 0, "open": open_count,
+                        "message": "No settled predictions yet; performance metrics are not available."}
+            total_staked = sum(row.stake for row in rows)
+            profit = sum(row.profit or 0.0 for row in rows)
+            wins = sum(bool(row.outcome) for row in rows)
+            brier = sum((row.probability - float(bool(row.outcome))) ** 2 for row in rows) / len(rows)
+            equity = peak = max_drawdown = 0.0
+            for row in rows:
+                equity += row.profit or 0.0
+                peak = max(peak, equity)
+                max_drawdown = max(max_drawdown, peak - equity)
+            return {
+                "settled": len(rows), "open": open_count, "wins": wins, "losses": len(rows) - wins,
+                "hit_rate": round(wins / len(rows), 6), "total_staked": round(total_staked, 6),
+                "net_profit": round(profit, 6),
+                "roi": round(profit / total_staked, 6) if total_staked else 0.0,
+                "yield": round(profit / total_staked, 6) if total_staked else 0.0,
+                "brier_score": round(brier, 6), "max_drawdown": round(max_drawdown, 6),
+                "scope": "settled journal entries only; no fees, taxes or price slippage",
+            }
+    finally:
+        engine.dispose()
 
 
 @app.post("/backtest")
