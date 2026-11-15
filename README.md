@@ -156,3 +156,12 @@ Example request body:
 - The endpoint exposes `ready_for_live_model`. Live analysis can use the returned rates as inputs to Sprint 8's Markov pricing endpoint.
 - Cito's Free plan delays live endpoints by approximately 60 seconds and has a 500-request monthly allowance according to its current documentation. Account-specific quotas and exact response coverage must be monitored.
 - The automatic route returns HTTP 422 with Cito's availability reason when the stats are missing or incomplete; it never falls back to guessed rates. Historical player priors, confidence/sample-size weighting, and automated periodic scanning remain follow-up work.
+
+
+## Sprint 10: live serve sample confidence
+
+- Each normalized live serve rate now includes its sample size and a 95% Wilson score interval. The observed rate is passed unchanged into the live Markov model; the interval is an uncertainty diagnostic, not a fabricated adjustment.
+- Samples below 30 service points are labelled `low`; 30–59 are `moderate`; 60 or more are `stronger`. These are transparent operational labels, not validated betting thresholds.
+- The automatic live-analysis response includes these diagnostics under `serve_statistics.serve_point_win_rates[].sample_confidence`.
+- No historical player prior is currently blended into the live rate. A trustworthy player- and surface-specific historical service-points dataset is not yet persisted in this project; inventing a prior or treating match-win form as serve-point form would be statistically unsound.
+- Historical form integration remains a separate next step: ingest timestamped player match/stat records, enforce a pre-match cutoff to prevent leakage, and validate any prior/shrinkage weights with chronological backtests before using them in live pricing.
