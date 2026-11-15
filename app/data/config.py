@@ -1,0 +1,32 @@
+"""Environment-based provider configuration. Secrets are never logged."""
+
+import os
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ProviderSettings:
+    historical_provider: str = "none"
+    live_provider: str = "none"
+    odds_provider: str = "none"
+    api_base_url: str | None = None
+    api_key: str | None = None
+    api_key_header: str = "Authorization"
+    api_key_prefix: str = "Bearer "
+    timeout_seconds: float = 15.0
+
+    @classmethod
+    def from_env(cls) -> "ProviderSettings":
+        timeout = float(os.getenv("TENNIS_DATA_TIMEOUT_SECONDS", "15"))
+        if timeout <= 0:
+            raise ValueError("TENNIS_DATA_TIMEOUT_SECONDS must be positive.")
+        return cls(
+            historical_provider=os.getenv("TENNIS_HISTORICAL_PROVIDER", "none").lower(),
+            live_provider=os.getenv("TENNIS_LIVE_PROVIDER", "none").lower(),
+            odds_provider=os.getenv("TENNIS_ODDS_PROVIDER", "none").lower(),
+            api_base_url=os.getenv("TENNIS_DATA_API_BASE_URL") or None,
+            api_key=os.getenv("TENNIS_DATA_API_KEY") or None,
+            api_key_header=os.getenv("TENNIS_DATA_API_KEY_HEADER", "Authorization"),
+            api_key_prefix=os.getenv("TENNIS_DATA_API_KEY_PREFIX", "Bearer "),
+            timeout_seconds=timeout,
+        )
