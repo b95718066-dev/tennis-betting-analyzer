@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.analytics.sample_confidence import assess_serve_sample
+
 
 SERVE_WON_KEYS = {
     "service_points_won", "serve_points_won", "service_points_won_count",
@@ -105,6 +107,7 @@ def normalize_live_serve_rates(payload: dict[str, Any]) -> dict[str, Any]:
         players.append({
             "side": side, "serve_point_win_rate": won / played,
             "service_points_won": int(won), "service_points_played": int(played),
+            "sample_confidence": assess_serve_sample(int(won), int(played)),
             "available": True,
         })
     complete = all(player["available"] for player in players)
