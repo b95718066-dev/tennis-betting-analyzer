@@ -175,3 +175,12 @@ Example request body:
 - These endpoints return provider records without fabricating missing statistics. The history route is a retrieval layer; it does not yet persist archive rows or calculate a serve-point prior.
 - Use canonical Cito player IDs (for example, IDs returned by player search), not display names. For chronological model evaluation, each feature must be cut off at the prediction timestamp; tournament-start dates for older archive eras are not exact match dates and must not be treated as exact-day evidence.
 - Next work: controlled historical ingestion with resumable pagination, immutable match-stat snapshots, late-stat refresh, and walk-forward backtests with strict timestamp cutoffs.
+
+
+## Sprint 12: historical storage and as-of player features
+
+- `POST /history/sync?tour=ATP&year=2025&page=1&page_size=100` fetches one Cito archive page with `include=stats` and idempotently upserts it into `historical_match_snapshots`. Repeat with `page=2..total_pages`; the response includes provider pagination metadata and the count of rows reporting available stats.
+- Re-fetching an existing match updates its raw archive payload so statistics published after the match can be filled in. Missing stats remain explicit in `stats_available` and `stats_unavailable_code`.
+- `GET /players/{player_id}/historical-features?before=2026-06-01T12:00:00Z&surface=clay&limit=20` calculates recent match win/loss features using only archive rows strictly before the cutoff. Date-only rows are excluded for the same calendar day because their time is unknown.
+- The historical store preserves raw Cito statistics verbatim. Match win rate is not substituted for serve-point win rate; structured serve/return aggregation and point-in-time odds features remain follow-up work.
+- This is the storage and feature foundation for walk-forward evaluation, not yet an automatically trained/retrained historical prediction model. The existing `/backtest` still evaluates supplied pre-generated predictions.
