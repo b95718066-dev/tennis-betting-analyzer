@@ -104,3 +104,46 @@ def test_chronological_split_keeps_future_records_out_of_training():
 def test_chronological_split_rejects_invalid_fraction():
     with pytest.raises(ValueError):
         chronological_split([{"placed_at": 1}, {"placed_at": 2}], train_fraction=1.0)
+
+
+
+def test_backtest_api_returns_metrics():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    response = client.post("/backtest", json={
+        "initial_bankroll": 100.0,
+        "calibration_bins": 5,
+        "bets": [{
+            "event_id": "match-api-1",
+            "selection": "Player A",
+            "probability": 0.7,
+            "odds_decimal": 1.8,
+            "outcome": True,
+            "stake": 10.0,
+            "placed_at": "2026-01-01T10:00:00Z",
+            "settled_at": "2026-01-01T12:00:00Z"
+        }]
+    })
+    assert response.status_code == 200
+    assert response.json()["summary"]["net_profit"] == pytest.approx(8.0)
+    assert response.json()["summary"]["roi"] == pytest.approx(0.08)
+
+
+def test_backtest_api_rejects_naive_timestamps():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    response = TestClient(app).post("/backtest", json={
+        "bets": [{
+            "event_id": "match-api-2",
+            "selection": "Player A",
+            "probability": 0.5,
+            "odds_decimal": 2.0,
+            "outcome": False,
+            "placed_at": "2026-01-01T10:00:00",
+            "settled_at": "2026-01-01T12:00:00Z"
+        }]
+    })
+    assert response.status_code == 422
