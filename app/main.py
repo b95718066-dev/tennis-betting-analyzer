@@ -10,6 +10,7 @@ from .analytics.prediction import predict_match
 from .analytics.backtest import BacktestBet, run_backtest
 from .analytics.probability import remove_margin, expected_value, value_bet
 from .analytics.live_probability import calculate_live_probabilities
+from .analytics.serve_stats import normalize_live_serve_rates
 from .data.config import ProviderSettings, build_live_provider, build_odds_provider
 from .data.models import Tour
 from .data.normalization import normalize_cito_live_match
@@ -315,6 +316,24 @@ async def stored_match_odds(match_id: str):
             }
     finally:
         engine.dispose()
+
+
+@app.get("/matches/{match_id}/serve-stats")
+async def live_match_serve_stats(match_id: str):
+    """Fetch and normalize Cito's structured live service-point statistics."""
+    provider = _live_provider()
+    try:
+        payload = await provider.fetch_live_stats_detail(match_id)
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Live statistics provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail="Live statistics provider returned an invalid response.") from error
+    result = normalize_live_serve_rates(payload)
+    result["match_id"] = match_id
+    return result
 
 
 @app.post("/matches/{match_id}/analyze-live")
