@@ -57,3 +57,41 @@ async def test_live_route_reports_upstream_failure_as_bad_gateway(monkeypatch):
 
     assert response.status_code == 502
     assert "429" in response.json()["detail"]
+
+@pytest.mark.asyncio
+async def test_live_probability_endpoint_returns_model_and_market_value():
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/live/probability", json={
+            "sets_player_1": 0,
+            "sets_player_2": 0,
+            "games_player_1": 3,
+            "games_player_2": 2,
+            "points_player_1": 2,
+            "points_player_2": 1,
+            "server": 1,
+            "best_of": 3,
+            "player_1_serve_point_win": 0.64,
+            "player_2_serve_point_win": 0.62,
+            "player_1_odds": 1.85,
+            "player_2_odds": 2.05,
+        })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_1_match_probability"] + body["player_2_match_probability"] == pytest.approx(1.0)
+    assert "player_1_current_set_probability" in body
+    assert body["market"]["overround"] > 0
+
+
+@pytest.mark.asyncio
+async def test_live_probability_endpoint_rejects_invalid_serve_rate():
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/live/probability", json={
+            "server": 1,
+            "player_1_serve_point_win": 1.0,
+            "player_2_serve_point_win": 0.62,
+        })
+
+    assert response.status_code == 422
