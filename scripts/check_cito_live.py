@@ -16,8 +16,14 @@ async def main() -> None:
         rows = await provider.fetch_live_payload()
     except ProviderHttpError as exc:
         # Status code and sanitized message are safe; never print credentials or body.
+        code = f"; provider_code={exc.error_code}" if exc.error_code else ""
+        hint = (
+            "; verify the account email in the Cito dashboard"
+            if exc.error_code == "EMAIL_NOT_VERIFIED"
+            else ""
+        )
         raise SystemExit(
-            f"Cito API request failed: HTTP {exc.status_code or 'network-error'}; {exc}"
+            f"Cito API request failed: HTTP {exc.status_code or 'network-error'}{code}{hint}; {exc}"
         ) from None
     except Exception as exc:
         raise SystemExit(f"Cito connectivity check failed: {type(exc).__name__}") from None
