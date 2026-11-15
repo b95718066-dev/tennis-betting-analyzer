@@ -203,3 +203,14 @@ Example request body:
 - Date-only matches on the cutoff calendar day are excluded. Timestamped rows must be earlier than the cutoff.
 - Ratings start at 1500 with K=32. Surface Elo is blended at 35% only after at least five recorded matches on that surface; otherwise effective Elo uses overall rating alone.
 - This is an interpretable baseline, not a trained or calibrated betting probability. It currently has no inactivity decay, tournament-specific K factor, retirement adjustment, doubles model or walk-forward calibration. It is exposed separately and does not silently replace the existing `/predict` model.
+
+
+## Sprint 15: walk-forward historical Elo validation
+
+- `GET /backtest/historical-elo?min_training_matches=10&surface=clay` evaluates the stored Cito archive with an expanding chronological window. It does not call the provider or change the existing prediction endpoint.
+- For each timestamped match, both players' pre-match ratings are used to generate the probability first; the match result is applied only afterward. Matches with identical timestamps are all predicted from the same frozen rating state before any result in that timestamp group is applied.
+- The default warm-up requires at least 10 prior recorded matches for each player. Change `min_training_matches` to adjust this threshold. Surface Elo uses the existing 35% blend only after five prior matches on that surface.
+- Reports out-of-sample match count, warm-up/date-only exclusions, accuracy, Brier score, log loss and calibration buckets. A sample of up to 100 individual predictions includes pre-match ratings and prior-match counts.
+- Date-only archive rows are never scored because their exact start time is unknown; they can update ratings only at the end of their calendar day for subsequent dates. Invalid rows are skipped.
+- ROI/Yield are intentionally not reported: this evaluation does not yet have a verified, timestamped pre-match odds join. It is a model-probability validation, not a profitability claim.
+- The evaluation is limited by whatever historical matches are already stored locally. It is a transparent Elo baseline, not a trained model or evidence of a betting edge.
