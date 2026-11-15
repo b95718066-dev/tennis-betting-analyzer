@@ -69,6 +69,9 @@ def calculate_live_probabilities(
     best_of: int,
     player_1_serve_point_win: float,
     player_2_serve_point_win: float,
+    tiebreak_points_player_1: int = 0,
+    tiebreak_points_player_2: int = 0,
+    tiebreak_first_server: int | None = None,
     player_1_odds: float | None = None,
     player_2_odds: float | None = None,
     min_ev: float = 0.03,
@@ -92,12 +95,26 @@ def calculate_live_probabilities(
         raise ValueError("Game scores cannot exceed 7.")
     if games_player_1 == games_player_2 == 7:
         raise ValueError("A set cannot have a 7-7 score.")
+    if min(tiebreak_points_player_1, tiebreak_points_player_2) < 0:
+        raise ValueError("Tiebreak points cannot be negative.")
+    in_tiebreak = games_player_1 == games_player_2 == 6
+    if not in_tiebreak and (tiebreak_points_player_1 or tiebreak_points_player_2 or tiebreak_first_server is not None):
+        raise ValueError("Tiebreak fields are only valid when the set score is 6-6.")
+    if tiebreak_first_server not in (None, 1, 2):
+        raise ValueError("tiebreak_first_server must be 1 or 2.")
+    tb_first = (tiebreak_first_server or server) if in_tiebreak else 0
 
     needed = (best_of + 1) // 2
-    current_game_p1 = _game_win_probability(
-        points_player_1, points_player_2, server,
-        player_1_serve_point_win, player_2_serve_point_win,
-    )
+    if in_tiebreak:
+        current_game_p1 = _calculate_tiebreak_probability(
+            tiebreak_points_player_1, tiebreak_points_player_2, tb_first,
+            player_1_serve_point_win, player_2_serve_point_win,
+        )
+    else:
+        current_game_p1 = _game_win_probability(
+            points_player_1, points_player_2, server,
+            player_1_serve_point_win, player_2_serve_point_win,
+        )
 
     @lru_cache(maxsize=None)
     def match_dp(
@@ -176,10 +193,13 @@ def calculate_live_probabilities(
     current_set_p1 = _calculate_set_probability(
         games_player_1, games_player_2, points_player_1, points_player_2,
         server, player_1_serve_point_win, player_2_serve_point_win,
+        tb_first if in_tiebreak else 0,
+        tiebreak_points_player_1, tiebreak_points_player_2,
     )
     match_p1 = match_dp(
         sets_player_1, sets_player_2, games_player_1, games_player_2,
-        points_player_1, points_player_2, server, 0, 0, 0,
+        points_player_1, points_player_2, server, tb_first,
+        tiebreak_points_player_1, tiebreak_points_player_2,
     )
 
     result: dict[str, Any] = {
@@ -216,6 +236,7 @@ def calculate_live_probabilities(
 def _calculate_set_probability(
     g1: int, g2: int, p1: int, p2: int, server: int,
     p1_serve: float, p2_serve: float,
+    initial_tb_first: int = 0, initial_tb1: int = 0, initial_tb2: int = 0,
 ) -> float:
     @lru_cache(maxsize=None)
     def solve(a: int, b: int, x: int, y: int, srv: int,
@@ -255,4 +276,29 @@ def _calculate_set_probability(
         else:
             wb = solve(a, b, ny[0], ny[1], srv, 0, 0, 0)
         return p * wa + (1 - p) * wb
-    return solve(g1, g2, p1, p2, server, 0, 0, 0)
+    return solve(g1, g2, p1, p2, server, initial_tb_first, initial_tb1, initial_tb2)
+
+
+def _calculate_tiebreak_probability(
+    tb1: int, tb2: int, first_server: int, p1_serve: float, p2_serve: float,
+) -> float:
+    if first_server not in (1, 2):
+        raise ValueError("A tiebreak requires its first server.")
+    if min(tb1, tb2) < 0:
+        raise ValueError("Tiebreak points cannot be negative.")
+
+    @lru_cache(maxsize=None)
+    def solve(a: int, b: int) -> float:
+        if a >= 7 and a - b >= 2:
+            return 1.0
+        if b >= 7 and b - a >= 2:
+            return 0.0
+        played = a + b
+        if played == 0:
+            srv = first_server
+        else:
+            pair_index = (played - 1) // 2
+            srv = (3 - first_server) if pair_index % 2 == 0 else first_server
+        p = p1_serve if srv == 1 else 1.0 - p2_serve
+        return p * solve(a + 1, b) + (1.0 - p) * solve(a, b + 1)
+    return solve(tb1, tb2)
