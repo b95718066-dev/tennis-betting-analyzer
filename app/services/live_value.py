@@ -125,9 +125,11 @@ def analyze_stored_live_match(
                                 match.player_2_name, bookmaker)
     if not odds:
         raise LookupError("No complete, linked, same-bookmaker h2h odds snapshot is available.")
-    if odds[0]["captured_at"].tzinfo is None:
-        raise ValueError("Stored odds timestamp is timezone-naive.")
-    age_seconds = (datetime.now(timezone.utc) - odds[0]["captured_at"].astimezone(timezone.utc)).total_seconds()
+    captured_at = odds[0]["captured_at"]
+    # SQLite drops timezone metadata; persisted timestamps are normalized UTC.
+    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    age_seconds = (datetime.now(timezone.utc) - captured_at.astimezone(timezone.utc)).total_seconds()
     if age_seconds < -60 or age_seconds > 15 * 60:
         raise LookupError("Latest complete odds snapshot is older than 15 minutes; refresh odds before analysis.")
 
@@ -173,7 +175,7 @@ def analyze_stored_live_match(
                   "current_game_points": [points_1, points_2],
                   "server": server, "tiebreak": in_tiebreak},
         "bookmaker": odds[0]["bookmaker"],
-        "odds_captured_at": odds[0]["captured_at"].isoformat(),
+        "odds_captured_at": captured_at.isoformat(),
         "odds_age_seconds": round(age_seconds, 1),
         "probability_model": result,
         "value_bets": candidates,
