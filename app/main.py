@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from .analytics.prediction import predict_match
 from .analytics.backtest import BacktestBet, run_backtest
 from .analytics.probability import remove_margin, expected_value, value_bet
+from .analytics.live_probability import calculate_live_probabilities
 from .data.config import ProviderSettings, build_live_provider
 from .data.models import Tour
 from .data.normalization import normalize_cito_live_match
@@ -23,6 +24,25 @@ class BacktestRequest(BaseModel):
     bets: list[BacktestBet] = Field(min_length=1)
     initial_bankroll: float = Field(default=1000.0, gt=0, allow_inf_nan=False)
     calibration_bins: int = Field(default=10, ge=2, le=50)
+
+
+class LiveProbabilityRequest(BaseModel):
+    sets_player_1: int = Field(default=0, ge=0, le=2)
+    sets_player_2: int = Field(default=0, ge=0, le=2)
+    games_player_1: int = Field(default=0, ge=0, le=7)
+    games_player_2: int = Field(default=0, ge=0, le=7)
+    points_player_1: int = Field(default=0, ge=0, le=4)
+    points_player_2: int = Field(default=0, ge=0, le=4)
+    server: int = Field(ge=1, le=2)
+    best_of: int = Field(default=3, description="Best-of-3 or best-of-5")
+    player_1_serve_point_win: float = Field(gt=0, lt=1)
+    player_2_serve_point_win: float = Field(gt=0, lt=1)
+    tiebreak_points_player_1: int = Field(default=0, ge=0)
+    tiebreak_points_player_2: int = Field(default=0, ge=0)
+    tiebreak_first_server: int | None = Field(default=None, ge=1, le=2)
+    player_1_odds: float | None = Field(default=None, gt=1)
+    player_2_odds: float | None = Field(default=None, gt=1)
+    min_ev: float = Field(default=0.03, ge=0, le=1)
 
 
 class PredictionRequest(BaseModel):
@@ -140,6 +160,15 @@ async def live_match_detail(match_id: str):
     except ValueError as error:
         raise HTTPException(status_code=502, detail="Live data provider returned an invalid response.") from error
     return {"provider": provider.name, "match": detail}
+
+
+@app.post("/live/probability")
+async def live_probability(request: LiveProbabilityRequest):
+    """Calculate in-play game, set and match probabilities from an explicit score state."""
+    try:
+        return calculate_live_probabilities(**request.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.post("/predict")
