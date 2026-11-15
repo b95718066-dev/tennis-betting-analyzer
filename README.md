@@ -100,3 +100,15 @@ ROI is net profit divided by initial bankroll; yield is net profit divided by ex
 - The sync response reports fetched, persisted and unmapped row counts. Provider-specific live fields remain in the stored raw payload; unknown or incomplete rows are skipped rather than assigned invented player identities.
 - This first ingestion slice initializes the current SQLAlchemy schema on demand for local development. Production deployments should apply versioned Alembic migrations and use a managed database before enabling scheduled sync.
 - Syncing Cito does not create odds or serve statistics. Those remain separate provider integrations and required model inputs.
+
+
+### Independent bookmaker odds ingestion
+
+The optional `the_odds_api` adapter uses a separate `THE_ODDS_API_KEY` and does not reuse the Cito credential. Configure `TENNIS_ODDS_PROVIDER=the_odds_api`, then call:
+
+- `POST /odds/sync?sport_key=tennis_atp_french_open`
+- Optional query parameters: `regions=eu` and `markets=h2h,spreads,totals`
+
+The adapter converts only bookmaker outcomes actually returned into timestamped decimal `OddsSnapshot` records. Market lines are retained in the market identifier, and repeated identical observations are deduplicated. `GET /providers` reports configured odds capabilities.
+
+**Coverage limitation:** The Odds API currently lists selected Grand Slams, ATP 1000/500 and WTA 1000/500 tournaments. Tennis coverage is mainly match-winner odds, with limited game spreads and totals from selected bookmakers. This is not full ATP/WTA tour coverage or every tennis market. Odds event IDs are provider-specific; reliable matching to Cito match IDs is a separate reconciliation step. Do not treat an odds event ID as a Cito match ID.
