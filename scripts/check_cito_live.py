@@ -4,6 +4,7 @@ import asyncio
 import os
 
 from app.data.providers.cito import CitoTennisProvider
+from app.data.providers.http import ProviderHttpError
 
 
 async def main() -> None:
@@ -13,8 +14,12 @@ async def main() -> None:
     provider = CitoTennisProvider(api_key=key)
     try:
         rows = await provider.fetch_live_payload()
+    except ProviderHttpError as exc:
+        # Status code and sanitized message are safe; never print credentials or body.
+        raise SystemExit(
+            f"Cito API request failed: HTTP {exc.status_code or 'network-error'}; {exc}"
+        ) from None
     except Exception as exc:
-        # Do not print request headers, URLs with query secrets, or response bodies.
         raise SystemExit(f"Cito connectivity check failed: {type(exc).__name__}") from None
     print(f"Cito connection successful. Live rows returned: {len(rows)}")
 
