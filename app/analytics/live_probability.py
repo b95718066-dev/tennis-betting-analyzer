@@ -45,9 +45,20 @@ def _game_win_probability(
 ) -> float:
     _validate_point_state(p1, p2)
 
+    p1_point = p1_serve if server == 1 else 1.0 - p2_serve
+    deuce_win = (p1_point * p1_point) / (
+        p1_point * p1_point + (1.0 - p1_point) * (1.0 - p1_point)
+    )
+    if p1 >= 3 and p2 >= 3:
+        if p1 == p2 == 3:
+            return deuce_win
+        if p1 == 4 and p2 == 3:
+            return p1_point + (1.0 - p1_point) * deuce_win
+        if p1 == 3 and p2 == 4:
+            return p1_point * deuce_win
+
     @lru_cache(maxsize=None)
     def solve(a: int, b: int) -> float:
-        p1_point = p1_serve if server == 1 else 1.0 - p2_serve
         next_p1 = _point_result(a, b, 1)
         next_p2 = _point_result(a, b, 2)
         win_if_p1 = 1.0 if next_p1 is None else solve(*next_p1)
@@ -83,6 +94,8 @@ def calculate_live_probabilities(
     ):
         _validate_probability(value, label)
     _validate_point_state(points_player_1, points_player_2)
+    if (player_1_odds is None) != (player_2_odds is None):
+        raise ValueError("Both player odds are required to calculate market value.")
     if server not in (1, 2):
         raise ValueError("server must be 1 or 2.")
     if best_of not in (3, 5):
@@ -157,10 +170,6 @@ def calculate_live_probabilities(
             win_if_p2 = continue_tb(*p2_state)
             return p1_point * win_if_p1 + (1.0 - p1_point) * win_if_p2
 
-        p1_point = player_1_serve_point_win if current_server == 1 else 1.0 - player_2_serve_point_win
-        after_p1 = _point_result(p1, p2, 1)
-        after_p2 = _point_result(p1, p2, 2)
-
         def continue_game(next_points: tuple[int, int] | None, winner: int) -> float:
             if next_points is None:
                 ng1, ng2 = (g1 + 1, g2) if winner == 1 else (g1, g2 + 1)
@@ -175,6 +184,16 @@ def calculate_live_probabilities(
             return match_dp(s1, s2, g1, g2, next_points[0], next_points[1],
                             current_server, 0, 0, 0)
 
+        if p1 >= 3 and p2 >= 3:
+            game_p1 = _game_win_probability(
+                p1, p2, current_server,
+                player_1_serve_point_win, player_2_serve_point_win,
+            )
+            return game_p1 * continue_game(None, 1) + (1.0 - game_p1) * continue_game(None, 2)
+
+        p1_point = player_1_serve_point_win if current_server == 1 else 1.0 - player_2_serve_point_win
+        after_p1 = _point_result(p1, p2, 1)
+        after_p2 = _point_result(p1, p2, 2)
         win_if_p1 = continue_game(after_p1, 1)
         win_if_p2 = continue_game(after_p2, 2)
         return p1_point * win_if_p1 + (1.0 - p1_point) * win_if_p2
@@ -254,6 +273,13 @@ def _calculate_set_probability(
             else:
                 wb = solve(a, b, 0, 0, srv, tb_first, cc, dd)
             return p * wa + (1 - p) * wb
+        if x >= 3 and y >= 3:
+            game_p1 = _game_win_probability(x, y, srv, p1_serve, p2_serve)
+            na, nb = a + 1, b
+            win_p1 = 1.0 if (na >= 6 and na - nb >= 2) or na == 7 else solve(na, nb, 0, 0, 3 - srv, 0, 0, 0)
+            na, nb = a, b + 1
+            win_p2 = 0.0 if (nb >= 6 and nb - na >= 2) or nb == 7 else solve(na, nb, 0, 0, 3 - srv, 0, 0, 0)
+            return game_p1 * win_p1 + (1.0 - game_p1) * win_p2
         p = p1_serve if srv == 1 else 1.0 - p2_serve
         nx = _point_result(x, y, 1)
         ny = _point_result(x, y, 2)
