@@ -43,13 +43,12 @@ async def test_http_provider_sends_configured_auth_header():
         assert request.headers["X-Api-Key"] == "secret-test-key"
         return httpx.Response(200, json={"matches": []})
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    provider = HttpJsonProvider(
-        name="test", base_url="https://example.test/api", api_key="secret-test-key",
-        api_key_header="X-Api-Key", api_key_prefix="", client=client,
-    )
-    assert await provider.get_json("matches", {"tour": "ATP"}) == {"matches": []}
-    await client.aclose()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = HttpJsonProvider(
+            name="test", base_url="https://example.test/api", api_key="secret-test-key",
+            api_key_header="X-Api-Key", api_key_prefix="", client=client,
+        )
+        assert await provider.get_json("matches", {"tour": "ATP"}) == {"matches": []}
 
 
 @pytest.mark.asyncio
@@ -57,13 +56,12 @@ async def test_http_provider_sanitizes_upstream_errors():
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"error": "secret details"})
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    provider = HttpJsonProvider(name="provider-x", base_url="https://example.test", client=client)
-    with pytest.raises(ProviderHttpError) as error:
-        await provider.get_json("matches")
-    assert error.value.status_code == 503
-    assert "secret details" not in str(error.value)
-    await client.aclose()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = HttpJsonProvider(name="provider-x", base_url="https://example.test", client=client)
+        with pytest.raises(ProviderHttpError) as error:
+            await provider.get_json("matches")
+        assert error.value.status_code == 503
+        assert "secret details" not in str(error.value)
 
 
 def test_http_provider_rejects_non_https_and_path_traversal():
@@ -71,12 +69,16 @@ def test_http_provider_rejects_non_https_and_path_traversal():
         HttpJsonProvider(name="bad", base_url="http://example.test")
     provider = HttpJsonProvider(name="ok", base_url="https://example.test")
     with pytest.raises(ValueError):
-        # Async method validates before making a network request.
         import asyncio
         asyncio.run(provider.get_json("../admin"))
 
 
-def test_provider_settings_default_to_no_external_provider():
+def test_provider_settings_default_to_no_external_provider(monkeypatch):
+    for name in (
+        "TENNIS_HISTORICAL_PROVIDER", "TENNIS_LIVE_PROVIDER", "TENNIS_ODDS_PROVIDER",
+        "TENNIS_DATA_API_BASE_URL", "TENNIS_DATA_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
     settings = ProviderSettings.from_env()
     assert settings.historical_provider == "none"
     assert settings.live_provider == "none"
