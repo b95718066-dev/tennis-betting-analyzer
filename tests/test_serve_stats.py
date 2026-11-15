@@ -69,3 +69,18 @@ def test_normalizes_cito_catalog_rows_with_per_player_numerator_denominator():
     assert result["ready_for_live_model"] is True
     assert result["serve_point_win_rates"][0]["serve_point_win_rate"] == pytest.approx(27 / 39)
     assert result["serve_point_win_rates"][1]["serve_point_win_rate"] == pytest.approx(19 / 31)
+
+
+def test_normalizes_cito_flat_live_board_service_points_rows_by_side():
+    result = normalize_live_serve_rates({
+        "stats_available": True,
+        "stats": [
+            {"key": "service_points_won", "side": 1, "numerator": 18, "denominator": 29, "pct": 62.1},
+            {"key": "total_points_won", "side": 1, "numerator": 36, "denominator": 58, "pct": 62.1},
+            {"key": "service_points_won", "side": 2, "numerator": 11, "denominator": 29, "pct": 37.9},
+        ],
+    })
+
+    assert result["ready_for_live_model"] is True
+    assert result["serve_point_win_rates"][0]["serve_point_win_rate"] == pytest.approx(18 / 29)
+    assert result["serve_point_win_rates"][1]["serve_point_win_rate"] == pytest.approx(11 / 29)

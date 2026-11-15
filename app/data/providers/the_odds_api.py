@@ -35,6 +35,19 @@ class TheOddsApiProvider(HttpJsonProvider):
         )
         self.api_key = api_key
 
+    async def fetch_sports(self, *, all_sports: bool = False) -> list[dict[str, Any]]:
+        """Return the provider's current sport catalogue, filtered to tennis leagues."""
+        params: dict[str, Any] = {"apiKey": self.api_key}
+        if all_sports:
+            params["all"] = "true"
+        payload = await self.get_json("sports", params=params)
+        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+            raise ValueError("The Odds API sports response must be a list of sport objects.")
+        return [
+            row for row in payload
+            if isinstance(row.get("key"), str) and row["key"].startswith("tennis_")
+        ]
+
     async def fetch_tennis_odds(
         self,
         *,

@@ -137,20 +137,22 @@ async def health_check():
 @app.get("/providers")
 async def provider_capabilities():
     settings = ProviderSettings.from_env()
-    if settings.live_provider == "cito":
-        return {
-            "live_provider": "cito",
-            "odds_provider": settings.odds_provider,
-            "odds_provider_configured": bool(settings.odds_api_key),
-            "configured": bool(settings.api_key),
-            "capabilities": {
-                "live_scores": True,
-                "point_by_point": True,
-                "historical_matches": True,
-                "pre_match_odds": False,
-                "live_odds": False,
-            },
-        }
+    odds_configured = settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key)
+    return {
+        "live_provider": settings.live_provider,
+        "odds_provider": settings.odds_provider,
+        "odds_provider_configured": odds_configured,
+        "configured": bool(settings.api_key) if settings.live_provider == "cito" else False,
+        "capabilities": {
+            "live_scores": settings.live_provider == "cito",
+            "point_by_point": settings.live_provider == "cito",
+            "historical_matches": settings.live_provider == "cito",
+            "pre_match_odds": odds_configured,
+            "live_odds": odds_configured,
+            "odds_markets": ["h2h", "spreads", "totals"] if odds_configured else [],
+            "odds_coverage_note": "Selected tennis tournaments only; actual markets vary by bookmaker and event.",
+        },
+    }
     return {
         "live_provider": settings.live_provider,
         "odds_provider": settings.odds_provider,
@@ -240,6 +242,52 @@ async def sync_live_matches(
         raise HTTPException(status_code=500, detail="Live matches could not be persisted.") from error
     finally:
         engine.dispose()
+
+
+@app.get("/odds/sports")
+async def available_tennis_odds_sports(all_sports: bool = Query(default=False)):
+    """Discover currently available tennis sport keys without consuming odds quota."""
+    provider = _odds_provider()
+    try:
+        sports = await provider.fetch_sports(all_sports=all_sports)
+        return {"provider": "the_odds_api", "count": len(sports), "sports": sports}
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Odds provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail="Odds provider returned an invalid sports catalogue.") from error
+
+
+@app.get("/odds/events")
+async def preview_tennis_odds(
+    sport_key: str = Query(min_length=8, max_length=100),
+    regions: str = Query(default="eu", min_length=2, max_length=40),
+    markets: str = Query(default="h2h", min_length=3, max_length=40),
+):
+    """Read current tennis bookmaker odds without persisting them."""
+    provider = _odds_provider()
+    try:
+        events = await provider.fetch_tennis_odds(
+            sport_key=sport_key, regions=regions, markets=markets
+        )
+        return {
+            "provider": "the_odds_api",
+            "sport_key": sport_key,
+            "regions": regions,
+            "markets": markets,
+            "events_count": len(events),
+            "events": events,
+            "note": "Read-only preview; call POST /odds/sync to persist timestamped odds.",
+        }
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Odds provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.post("/odds/sync")

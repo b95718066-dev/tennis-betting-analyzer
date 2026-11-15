@@ -103,6 +103,17 @@ class CitoTennisProvider(HttpJsonProvider):
         payload = await self.get_json(f"matches/live/{quote(match_id, safe='')}")
         if not isinstance(payload, dict):
             raise ValueError("Cito live match detail must be a JSON object.")
+        stats = payload.get("stats")
+        if isinstance(stats, list) and stats:
+            return payload
+
+        # Some Cito plans expose structured point-count rows on the live board
+        # but omit them from the per-match detail response. Reuse only the exact
+        # matching live row; never synthesize statistics from the scoreboard.
+        rows = await self.fetch_live_payload()
+        for row in rows:
+            if row.get("id") == match_id or row.get("match_id") == match_id:
+                return row
         return payload
 
     async def fetch_match_detail(self, match_id: str) -> dict[str, Any]:
