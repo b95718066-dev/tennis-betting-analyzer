@@ -95,7 +95,6 @@ def player_history_features(
     query = select(HistoricalMatchSnapshot).where(
         HistoricalMatchSnapshot.provider == "cito",
         HistoricalMatchSnapshot.match_date.is_not(None),
-        HistoricalMatchSnapshot.match_date < cutoff_text,
         or_(
             HistoricalMatchSnapshot.player_1_id == player_id,
             HistoricalMatchSnapshot.player_2_id == player_id,
@@ -103,9 +102,24 @@ def player_history_features(
     )
     if surface:
         query = query.where(HistoricalMatchSnapshot.surface == surface.lower())
-    rows = session.scalars(
-        query.order_by(HistoricalMatchSnapshot.match_date.desc()).limit(limit)
+    candidates = session.scalars(
+        query.order_by(HistoricalMatchSnapshot.match_date.desc())
     ).all()
+    rows = []
+    for row in candidates:
+        try:
+            match_time = datetime.fromisoformat(row.match_date.replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            continue
+        # Date-only archive rows are usable only on later calendar days;
+        # treating their date as midnight could leak a same-day result.
+        if match_time.tzinfo is None or match_time.utcoffset() is None:
+            if match_time.date() < cutoff.astimezone(timezone.utc).date():
+                rows.append(row)
+        elif match_time.astimezone(timezone.utc) < cutoff.astimezone(timezone.utc):
+            rows.append(row)
+        if len(rows) >= limit:
+            break
     decided = [r for r in rows if r.winner_id in {r.player_1_id, r.player_2_id}]
     wins = sum(r.winner_id == player_id for r in decided)
     losses = len(decided) - wins
