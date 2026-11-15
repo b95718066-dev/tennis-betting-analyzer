@@ -572,6 +572,32 @@ async def get_player_historical_stats(
         engine.dispose()
 
 
+
+
+@app.get("/players/{player_id}/elo-vs/{opponent_id}")
+async def get_historical_elo_matchup(
+    player_id: str,
+    opponent_id: str,
+    before: str = Query(description="Exclusive ISO-8601 prediction timestamp"),
+    surface: str = Query(pattern="^(hard|clay|grass|carpet)$"),
+):
+    """Return as-of overall/surface Elo ratings and baseline matchup probability."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            try:
+                return historical_elo_ratings(
+                    session, player_id=player_id, opponent_id=opponent_id,
+                    before=before, surface=surface,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        engine.dispose()
+
+
 @app.get("/matches")
 async def stored_matches(
     tour: Tour | None = Query(default=None),
