@@ -87,3 +87,20 @@ def test_walk_forward_validates_parameters_and_handles_no_sample():
         assert result["metrics"] is None
         assert result["calibration"] == []
     engine.dispose()
+
+
+def test_platt_calibration_fits_only_when_both_outcomes_and_minimum_sample_exist():
+    from app.analytics.walk_forward import _apply_platt, _fit_platt
+    assert _fit_platt([(0.6, True)] * 29) is None
+    assert _fit_platt([(0.6, True)] * 40) is None
+    sample = [(0.65, i % 3 != 0) for i in range(90)]
+    parameters = _fit_platt(sample)
+    assert parameters is not None
+    calibrated = _apply_platt(0.65, parameters)
+    assert 0.0 < calibrated < 1.0
+
+
+def test_platt_calibration_is_bounded_for_extreme_probabilities():
+    from app.analytics.walk_forward import _apply_platt
+    assert 0.0 < _apply_platt(0.000001, {"slope": 1.0, "intercept": 0.0}) < 1.0
+    assert 0.0 < _apply_platt(0.999999, {"slope": 1.0, "intercept": 0.0}) < 1.0
