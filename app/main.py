@@ -16,6 +16,8 @@ from .data.models import Tour
 from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
 from .services.live_sync import persist_live_rows
+from .services.historical_sync import persist_historical_rows, player_history_features
+from .storage.models import HistoricalMatchSnapshot
 from .services.odds_sync import persist_odds_events
 from .services.live_value import analyze_stored_live_match
 from .storage.database import build_engine, create_schema
@@ -474,6 +476,74 @@ async def player_recent_form(
         ) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+
+@app.post("/history/sync")
+async def sync_historical_matches(
+    tour: str = Query(pattern="^(ATP|WTA)$"),
+    year: int = Query(ge=1877, le=2100),
+    surface: str | None = Query(default=None, pattern="^(hard|clay|grass|carpet)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=100),
+):
+    """Fetch and upsert one historical archive page, including available match stats."""
+    provider = _live_provider()
+    try:
+        payload = await provider.fetch_historical_matches(
+            tour=tour, year=year, surface=surface, page=page,
+            page_size=page_size, include_stats=True,
+        )
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Historical provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            result = persist_historical_rows(session, payload["items"])
+        result.update({
+            "provider": "cito", "tour": tour, "year": year, "surface": surface,
+            "page": payload.get("page", page),
+            "page_size": payload.get("page_size", page_size),
+            "total": payload.get("total"),
+            "total_pages": payload.get("total_pages"),
+            "has_next": payload.get("has_next"),
+            "stats_rows": sum(bool(row.get("stats_available")) for row in payload["items"]),
+        })
+        return result
+    finally:
+        engine.dispose()
+
+
+@app.get("/players/{player_id}/historical-features")
+async def get_player_historical_features(
+    player_id: str,
+    before: str = Query(description="Exclusive ISO-8601 prediction timestamp"),
+    surface: str | None = Query(default=None, pattern="^(hard|clay|grass|carpet)$"),
+    limit: int = Query(default=20, ge=1, le=200),
+):
+    """Return prior match-result features with strict timestamp leakage protection."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            try:
+                return player_history_features(
+                    session, player_id=player_id, before=before,
+                    surface=surface, limit=limit,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        engine.dispose()
 
 
 @app.get("/matches")
