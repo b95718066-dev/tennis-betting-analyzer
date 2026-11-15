@@ -260,6 +260,36 @@ async def available_tennis_odds_sports(all_sports: bool = Query(default=False)):
         raise HTTPException(status_code=502, detail="Odds provider returned an invalid sports catalogue.") from error
 
 
+@app.get("/odds/events")
+async def preview_tennis_odds(
+    sport_key: str = Query(min_length=8, max_length=100),
+    regions: str = Query(default="eu", min_length=2, max_length=40),
+    markets: str = Query(default="h2h", min_length=3, max_length=40),
+):
+    """Read current tennis bookmaker odds without persisting them."""
+    provider = _odds_provider()
+    try:
+        events = await provider.fetch_tennis_odds(
+            sport_key=sport_key, regions=regions, markets=markets
+        )
+        return {
+            "provider": "the_odds_api",
+            "sport_key": sport_key,
+            "regions": regions,
+            "markets": markets,
+            "events_count": len(events),
+            "events": events,
+            "note": "Read-only preview; call POST /odds/sync to persist timestamped odds.",
+        }
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Odds provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @app.post("/odds/sync")
 async def sync_tennis_odds(
     sport_key: str = Query(min_length=8, max_length=100),
