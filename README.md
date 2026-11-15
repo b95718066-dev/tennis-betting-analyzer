@@ -194,3 +194,12 @@ Example request body:
 - Each available service/return win metric includes a 95% Wilson interval and sample-size diagnostic. Missing or invalid count pairs and zero denominators remain unavailable.
 - Date-only rows from the cutoff calendar day are excluded. Timestamped rows must be strictly earlier than the cutoff.
 - This endpoint is descriptive historical evidence only. It does not silently blend historical rates into the live model; any shrinkage or weighting requires separate chronological validation.
+
+
+## Sprint 14: historical Elo replay
+
+- `GET /players/{player_id}/elo-vs/{opponent_id}?before=2026-06-01T12:00:00Z&surface=clay` replays stored completed Cito match outcomes chronologically and returns both players' as-of overall Elo, surface Elo and a baseline Elo matchup probability.
+- All stored completed matches are replayed to preserve opponent-strength propagation; only information strictly before the exclusive cutoff is included.
+- Date-only matches on the cutoff calendar day are excluded. Timestamped rows must be earlier than the cutoff.
+- Ratings start at 1500 with K=32. Surface Elo is blended at 35% only after at least five recorded matches on that surface; otherwise effective Elo uses overall rating alone.
+- This is an interpretable baseline, not a trained or calibrated betting probability. It currently has no inactivity decay, tournament-specific K factor, retirement adjustment, doubles model or walk-forward calibration. It is exposed separately and does not silently replace the existing `/predict` model.
