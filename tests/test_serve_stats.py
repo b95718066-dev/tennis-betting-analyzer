@@ -52,3 +52,20 @@ def test_rejects_won_count_larger_than_played_count():
     })
 
     assert result["ready_for_live_model"] is False
+
+
+def test_normalizes_cito_catalog_rows_with_per_player_numerator_denominator():
+    result = normalize_live_serve_rates({
+        "stats_available": True,
+        "stats": [
+            {
+                "key": "service_points_won",
+                "player1": {"numerator": 27, "denominator": 39, "pct": 69.2},
+                "player2": {"numerator": 19, "denominator": 31, "pct": 61.3},
+            }
+        ],
+    })
+
+    assert result["ready_for_live_model"] is True
+    assert result["serve_point_win_rates"][0]["serve_point_win_rate"] == pytest.approx(27 / 39)
+    assert result["serve_point_win_rates"][1]["serve_point_win_rate"] == pytest.approx(19 / 31)
