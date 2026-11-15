@@ -100,10 +100,7 @@ class CitoTennisProvider(HttpJsonProvider):
 
         if not match_id or "/" in match_id or match_id in {".", ".."}:
             raise ValueError("match_id must be a non-empty provider ID.")
-        payload = await self.get_json(
-            f"matches/live/{quote(match_id, safe='')}",
-            params={"stats": "true"},
-        )
+        payload = await self.get_json(f"matches/live/{quote(match_id, safe='')}")
         if not isinstance(payload, dict):
             raise ValueError("Cito live match detail must be a JSON object.")
         return payload
