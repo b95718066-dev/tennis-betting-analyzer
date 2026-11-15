@@ -30,3 +30,19 @@ class ProviderSettings:
             api_key_prefix=os.getenv("TENNIS_DATA_API_KEY_PREFIX", "Bearer "),
             timeout_seconds=timeout,
         )
+
+
+def build_live_provider(settings: ProviderSettings | None = None):
+    """Construct the configured live provider; no network request is made here."""
+    from app.data.providers.cito import CitoTennisProvider
+
+    settings = settings or ProviderSettings.from_env()
+    if settings.live_provider == "none":
+        return None
+    if settings.live_provider == "cito":
+        return CitoTennisProvider(
+            api_key=settings.api_key,
+            base_url=settings.api_base_url,
+            timeout_seconds=settings.timeout_seconds,
+        )
+    raise ValueError(f"Unsupported live tennis provider: {settings.live_provider}")

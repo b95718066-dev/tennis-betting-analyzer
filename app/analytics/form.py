@@ -63,7 +63,7 @@ def calculate_form(
         "matches": len(results),
         "wins": wins,
         "losses": losses,
-        "win_rate": round(wins / len(results), 4),
-        "form_score": round(weighted_score / total_weight, 4),
+        "win_rate": wins / len(results),
+        "form_score": weighted_score / total_weight,
         "streak": streak if latest_result == "W" else -streak,
     }
