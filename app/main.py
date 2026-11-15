@@ -424,6 +424,58 @@ async def analyze_live_match_value(match_id: str, request: LiveValueAnalysisRequ
         engine.dispose()
 
 
+
+@app.get("/players/{player_id}/history")
+async def player_historical_matches(
+    player_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    surface: str | None = Query(default=None),
+    year: int | None = Query(default=None, ge=1877, le=2100),
+    include_stats: bool = Query(default=True),
+):
+    """Fetch a player's newest-first Cito archive log, optionally with match stats."""
+    provider = _live_provider()
+    try:
+        payload = await provider.fetch_player_matches(
+            player_id, limit=limit, surface=surface, year=year,
+            include_stats=include_stats,
+        )
+        return {
+            "provider": "cito",
+            "player_id": player_id,
+            "filters": {"limit": limit, "surface": surface, "year": year,
+                        "include_stats": include_stats},
+            "history": payload,
+            "note": "Provider archive rows are returned as supplied; missing statistics remain missing.",
+        }
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Historical data provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/players/{player_id}/form")
+async def player_recent_form(
+    player_id: str,
+    limit: int = Query(default=10, ge=1, le=100),
+):
+    """Fetch Cito's documented recent-form results for one canonical player ID."""
+    provider = _live_provider()
+    try:
+        payload = await provider.fetch_player_form(player_id, limit=limit)
+        return {"provider": "cito", "player_id": player_id, "form": payload}
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Player form provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @app.get("/matches")
 async def stored_matches(
     tour: Tour | None = Query(default=None),
