@@ -1,9 +1,9 @@
 """Cito Tennis API adapter.
 
-This adapter deliberately preserves the provider payload. The upstream API does
-not currently offer bookmaker odds, and its live feed has provider-specific
-fields; canonical MatchRecord normalization is kept separate until every field
-mapping is covered by contract tests.
+This adapter preserves the raw provider payload and exposes the documented
+live-feed envelope and metadata. Canonical MatchRecord normalization is handled
+by app.data.normalization and covered by contract tests. Cito does not currently
+provide bookmaker odds; odds must come from a separate provider.
 """
 
 from __future__ import annotations
