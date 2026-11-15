@@ -122,7 +122,13 @@ async def provider_capabilities():
     return {
         "live_provider": settings.live_provider,
         "odds_provider": settings.odds_provider,
-        "odds_provider_configured": bool(settings.odds_api_key),
+        "odds_provider_configured": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
+        "odds_capabilities": {
+            "pre_match_odds": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
+            "live_odds": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
+            "markets": ["h2h", "spreads", "totals"],
+            "coverage_note": "Selected tennis tournaments only; actual markets vary by bookmaker and event.",
+        },
         "configured": False,
         "capabilities": {
             "live_scores": False,
