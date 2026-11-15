@@ -36,8 +36,15 @@ def persist_historical_rows(
         # Some archive rows carry winner_id directly.
         if winner_id is None and row.get("winner_id") is not None:
             winner_id = str(row["winner_id"])
-        date_value = row.get("date") or row.get("match_date") or row.get("scheduled_at")
-        match_date = date_value if isinstance(date_value, str) else None
+        # Prefer an exact scheduled/actual timestamp only when Cito explicitly
+        # marks the start time as known. Otherwise retain the date-only value:
+        # never manufacture a kickoff time from a calendar date.
+        starts_at = row.get("starts_at") or row.get("scheduled_at")
+        if row.get("start_time_known") is True and isinstance(starts_at, str):
+            match_date = starts_at
+        else:
+            date_value = row.get("date") or row.get("match_date") or row.get("scheduled_at")
+            match_date = date_value if isinstance(date_value, str) else None
         stats_available = row.get("stats_available")
         if not isinstance(stats_available, bool):
             stats_available = None
