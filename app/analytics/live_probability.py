@@ -143,11 +143,8 @@ def calculate_live_probabilities(
             next_tb1, next_tb2 = tb1 + 1, tb2
             p1_state = (next_tb1, next_tb2)
             p2_state = (tb1, tb2 + 1)
-            p1_done = next_tb1 >= 7 and next_tb1 - next_tb2 >= 2
-            p2_done = next_tb2 >= 7 and next_tb2 - next_tb1 >= 2
-
-            def continue_tb(a: int, b: int, p1_won: bool) -> float:
-                if p1_won or (a >= 7 and a - b >= 2):
+            def continue_tb(a: int, b: int) -> float:
+                if a >= 7 and a - b >= 2:
                     return match_dp(s1 + 1, s2, 0, 0, 0, 0,
                                     3 - tb_first_server, 0, 0, 0)
                 if b >= 7 and b - a >= 2:
@@ -156,8 +153,8 @@ def calculate_live_probabilities(
                 return match_dp(s1, s2, g1, g2, 0, 0,
                                 current_server, tb_first_server, a, b)
 
-            win_if_p1 = continue_tb(*p1_state, p1_done)
-            win_if_p2 = continue_tb(*p2_state, p2_done)
+            win_if_p1 = continue_tb(*p1_state)
+            win_if_p2 = continue_tb(*p2_state)
             return p1_point * win_if_p1 + (1.0 - p1_point) * win_if_p2
 
         p1_point = player_1_serve_point_win if current_server == 1 else 1.0 - player_2_serve_point_win
@@ -184,12 +181,7 @@ def calculate_live_probabilities(
 
     # First compute current-set probability by pricing a best-of-one match
     # from the exact same score. Then price the full match with current sets.
-    set_needed = 1
-    # A local solver shares the same state transitions through a target override.
-    # Reuse match_dp by translating the current sets to zero and best-of-one
-    # semantics via a dedicated current-set wrapper below.
-    # For set probability, calculate chance of winning the current set using
-    # a second DP with the same point-state mechanics.
+    # Price the current set separately from the full match.
     current_set_p1 = _calculate_set_probability(
         games_player_1, games_player_2, points_player_1, points_player_2,
         server, player_1_serve_point_win, player_2_serve_point_win,
