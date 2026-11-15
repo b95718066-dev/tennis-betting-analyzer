@@ -8,6 +8,7 @@ from .analytics.backtest import BacktestBet, run_backtest
 from .analytics.probability import remove_margin, expected_value, value_bet
 from .data.config import ProviderSettings, build_live_provider
 from .data.models import Tour
+from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
 
 
@@ -110,11 +111,19 @@ async def live_matches(
     except ValueError as error:
         raise HTTPException(status_code=502, detail="Live data provider returned an invalid response.") from error
 
+    normalized = [
+        item for row in rows
+        if (item := normalize_cito_live_match(row)) is not None
+    ]
     return {
         "provider": provider.name,
         "tour": tour.value if tour else "ALL",
         "count": len(rows),
+        "normalized_count": len(normalized),
+        "unmapped_count": len(rows) - len(normalized),
+        "delay": getattr(provider, "last_live_metadata", {}).get("delayed"),
         "matches": rows,
+        "normalized_matches": normalized,
     }
 
 
