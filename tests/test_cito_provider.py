@@ -9,13 +9,13 @@ from app.data.providers.base import ProviderNotImplementedError
 
 
 @pytest.mark.asyncio
-async def test_cito_live_payload_uses_documented_data_envelope_and_auth_header():
+async def test_cito_live_payload_uses_documented_items_envelope_and_auth_header():
     seen = {}
 
     def handler(request: httpx.Request):
         seen["url"] = str(request.url)
         seen["key"] = request.headers.get("x-api-key")
-        return httpx.Response(200, json={"success": True, "data": [{"id": "match-1"}], "meta": {"count": 1}})
+        return httpx.Response(200, json={"success": True, "items": [{"id": "match-1"}], "meta": {"count": 1}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = CitoTennisProvider(api_key="test-secret", client=client)
@@ -27,9 +27,9 @@ async def test_cito_live_payload_uses_documented_data_envelope_and_auth_header()
 
 
 @pytest.mark.asyncio
-async def test_cito_accepts_empty_live_data_list():
+async def test_cito_accepts_empty_live_items_list():
     def handler(request: httpx.Request):
-        return httpx.Response(200, json={"success": True, "data": []})
+        return httpx.Response(200, json={"success": True, "items": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = CitoTennisProvider(client=client)
