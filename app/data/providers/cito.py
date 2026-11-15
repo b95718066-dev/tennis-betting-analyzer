@@ -94,6 +94,20 @@ class CitoTennisProvider(HttpJsonProvider):
             raise ValueError("Cito live match detail must be a JSON object.")
         return payload
 
+    async def fetch_live_stats_detail(self, match_id: str) -> dict[str, Any]:
+        """Fetch the documented detailed live state, including structured stats when available."""
+        from urllib.parse import quote
+
+        if not match_id or "/" in match_id or match_id in {".", ".."}:
+            raise ValueError("match_id must be a non-empty provider ID.")
+        payload = await self.get_json(
+            f"matches/live/{quote(match_id, safe='')}",
+            params={"stats": "true"},
+        )
+        if not isinstance(payload, dict):
+            raise ValueError("Cito live match detail must be a JSON object.")
+        return payload
+
     async def fetch_match_detail(self, match_id: str) -> dict[str, Any]:
         """Fetch one provider match detail; match_id is URL-encoded as one path segment."""
         from urllib.parse import quote
