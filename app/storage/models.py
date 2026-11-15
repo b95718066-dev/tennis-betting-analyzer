@@ -121,3 +121,29 @@ class PredictionRecord(Base):
     outcome: Mapped[bool | None] = mapped_column(Boolean)
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     profit: Mapped[float | None] = mapped_column(Float)
+
+
+class HistoricalMatchSnapshot(Base):
+    """Historical archive row with provider statistics preserved verbatim."""
+    __tablename__ = "historical_match_snapshots"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_id", name="uq_historical_provider_match"),
+        Index("ix_historical_match_date", "match_date"),
+        Index("ix_historical_player_1_date", "player_1_id", "match_date"),
+        Index("ix_historical_player_2_date", "player_2_id", "match_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    match_date: Mapped[str | None] = mapped_column(String(40))
+    tour: Mapped[str | None] = mapped_column(String(20))
+    surface: Mapped[str | None] = mapped_column(String(24))
+    player_1_id: Mapped[str | None] = mapped_column(String(180))
+    player_2_id: Mapped[str | None] = mapped_column(String(180))
+    winner_id: Mapped[str | None] = mapped_column(String(180))
+    stats_available: Mapped[bool | None] = mapped_column(Boolean)
+    stats_unavailable_code: Mapped[str | None] = mapped_column(String(120))
+    raw: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
