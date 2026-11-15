@@ -145,3 +145,15 @@ def test_backtest_api_rejects_naive_timestamps():
         }]
     })
     assert response.status_code == 422
+
+
+
+def test_overlapping_bets_reserve_cash_until_the_first_match_settles():
+    first = bet(0, outcome=True, stake=70.0).model_copy(
+        update={"settled_at": datetime(2026, 1, 3, tzinfo=timezone.utc)}
+    )
+    second = bet(1, outcome=True, stake=50.0)
+    result = run_backtest([first, second], initial_bankroll=100.0)
+    assert result["summary"]["bets"] == 1
+    assert result["summary"]["skipped_insufficient_bankroll"] == 1
+    assert result["summary"]["final_bankroll"] == pytest.approx(170.0)
