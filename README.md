@@ -63,3 +63,16 @@ python -m pytest -q
 ## Responsible use
 
 Model probabilities are estimates, not guarantees. A positive expected value is not proof of profitability. Validate models out of sample and paper-trade before considering real stakes.
+
+
+## Live API endpoints (Sprint 4)
+
+When `TENNIS_LIVE_PROVIDER=cito` and `TENNIS_DATA_API_KEY` are configured:
+
+- `GET /providers` reports configured provider capabilities (Cito does not currently supply bookmaker odds).
+- `GET /live` returns the current live board.
+- `GET /live?tour=ATP` or `GET /live?tour=WTA` filters the board.
+- `GET /live?include_point_history=true` requests point history where the provider has it.
+- `GET /live/{match_id}` returns detailed live state for one match.
+
+The live routes return provider payloads without guessing player identity or score mappings. Provider errors are surfaced as sanitized HTTP 502 responses; a missing API key returns HTTP 503. Cito documents a free allowance of 500 requests/month and approximately 60-second live-data delay on Free and Starter plans; confirm current limits and plan terms in the provider dashboard before production use.
