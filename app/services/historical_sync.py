@@ -33,6 +33,11 @@ def persist_historical_rows(
         p1_id = _nested_id(p1)
         p2_id = _nested_id(p2)
         winner_id = _nested_id(winner)
+        # Cito's archive can order the winner as player1. Canonicalize the
+        # two participant slots by stable ID so model outcomes are not biased
+        # by provider presentation order. Keep winner_id tied to the identity.
+        if p1_id and p2_id and p2_id < p1_id:
+            p1_id, p2_id = p2_id, p1_id
         # Some archive rows carry winner_id directly.
         if winner_id is None and row.get("winner_id") is not None:
             winner_id = str(row["winner_id"])
