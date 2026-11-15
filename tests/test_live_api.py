@@ -134,14 +134,38 @@ async def test_live_sync_persists_matches_and_stored_matches_can_be_read(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_odds_sync_persists_bookmaker_snapshots(monkeypatch, tmp_path):
+async def test_odds_sync_persists_and_links_bookmaker_snapshots(monkeypatch, tmp_path):
     from datetime import datetime, timezone
+
+    class FakeLiveProvider:
+        name = "cito"
+
+        async def fetch_live_payload(self, *, tour=None, include_point_history=False):
+            updated = datetime.now(timezone.utc).isoformat()
+            return [{
+                "id": "sync-match-1",
+                "canonical_id": "sync-match-1",
+                "tour": "ATP",
+                "status": "IN_PROGRESS",
+                "scheduled_at": updated,
+                "tournament_name": "Test Open",
+                "surface": "Hard",
+                "best_of": 3,
+                "player1": {"id": "p1", "name": "Player One", "current_game_score": "15", "is_serving": True},
+                "player2": {"id": "p2", "name": "Player Two", "current_game_score": "0", "is_serving": False},
+                "sets": [{"player1_games": 2, "player2_games": 1}],
+                "current_set": 1,
+                "game_score": "15-0",
+                "server": 1,
+            }]
 
     class FakeOddsProvider:
         async def fetch_tennis_odds(self, *, sport_key, regions="eu", markets="h2h,spreads,totals"):
             updated = datetime.now(timezone.utc).isoformat()
             return [{
                 "id": "odds-event-api-1",
+                "home_team": "Player Two",
+                "away_team": "Player One",
                 "commence_time": updated,
                 "bookmakers": [{
                     "key": "book-a",
@@ -157,16 +181,23 @@ async def test_odds_sync_persists_bookmaker_snapshots(monkeypatch, tmp_path):
                 }],
             }]
 
+    monkeypatch.setattr(api, "_live_provider", lambda: FakeLiveProvider())
     monkeypatch.setattr(api, "_odds_provider", lambda: FakeOddsProvider())
     monkeypatch.setenv("TENNIS_ODDS_PROVIDER", "the_odds_api")
     monkeypatch.setenv("THE_ODDS_API_KEY", "test-key")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'odds-sync.db'}")
     transport = httpx.ASGITransport(app=api.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/odds/sync?sport_key=tennis_atp_french_open")
+        live_response = await client.post("/live/sync?tour=ATP")
+        odds_response = await client.post("/odds/sync?sport_key=tennis_atp_french_open")
+        match_odds_response = await client.get("/matches/sync-match-1/odds")
 
-    assert response.status_code == 200
-    body = response.json()
+    assert live_response.status_code == 200
+    assert odds_response.status_code == 200
+    body = odds_response.json()
     assert body["events_fetched"] == 1
     assert body["snapshots_inserted"] == 2
-    assert body["sport_key"] == "tennis_atp_french_open"
+    assert body["events_matched_to_cito"] == 1
+    assert body["events_unmatched_to_cito"] == 0
+    assert match_odds_response.status_code == 200
+    assert match_odds_response.json()["count"] == 2
