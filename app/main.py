@@ -64,6 +64,13 @@ class LiveValueAnalysisRequest(BaseModel):
     auto_record: bool = True
 
 
+class AutoLiveValueAnalysisRequest(BaseModel):
+    min_ev: float = Field(default=0.03, ge=0, le=1)
+    bookmaker: str | None = Field(default=None, min_length=1, max_length=120)
+    stake: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    auto_record: bool = True
+
+
 class PredictionJournalRequest(BaseModel):
     event_id: str = Field(min_length=1, max_length=180)
     market: str = Field(default="match_winner", min_length=1, max_length=120)
@@ -334,6 +341,60 @@ async def live_match_serve_stats(match_id: str):
     result = normalize_live_serve_rates(payload)
     result["match_id"] = match_id
     return result
+
+
+@app.post("/matches/{match_id}/analyze-live/auto")
+async def analyze_live_match_value_auto(
+    match_id: str, request: AutoLiveValueAnalysisRequest
+):
+    """Fetch verified Cito serve stats and use them to price the stored live score."""
+    provider = _live_provider()
+    try:
+        payload = await provider.fetch_live_stats_detail(match_id)
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Live statistics provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail="Live statistics provider returned an invalid response.") from error
+
+    stats = normalize_live_serve_rates(payload)
+    if not stats["ready_for_live_model"]:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Cito has not supplied valid service-point won/played counts for both players.",
+                "statistics": stats,
+            },
+        )
+
+    rates = stats["serve_point_win_rates"]
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            try:
+                result = analyze_stored_live_match(
+                    session,
+                    match_id=match_id,
+                    player_1_serve_point_win=rates[0]["serve_point_win_rate"],
+                    player_2_serve_point_win=rates[1]["serve_point_win_rate"],
+                    min_ev=request.min_ev,
+                    bookmaker=request.bookmaker,
+                    stake=request.stake,
+                    auto_record=request.auto_record,
+                )
+            except LookupError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+        result["serve_statistics"] = stats
+        result["serve_point_win_rates_source"] = "cito_live_match_stats"
+        return result
+    finally:
+        engine.dispose()
 
 
 @app.post("/matches/{match_id}/analyze-live")
