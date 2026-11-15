@@ -80,3 +80,22 @@ class ProviderSyncState(Base):
     cursor: Mapped[str | None] = mapped_column(String(500))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(500))
+
+
+class ProviderMatchLink(Base):
+    """Explicit cross-provider identity link; never infer identity from provider IDs."""
+
+    __tablename__ = "provider_match_links"
+    __table_args__ = (
+        UniqueConstraint("source_provider", "source_external_id", name="uq_source_match_link"),
+        Index("ix_canonical_match_link", "canonical_provider", "canonical_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_external_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    canonical_provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    canonical_external_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    match_method: Mapped[str] = mapped_column(String(80), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
