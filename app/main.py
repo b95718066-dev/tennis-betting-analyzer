@@ -2,6 +2,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import sessionmaker
 
 from .analytics.prediction import predict_match
 from .analytics.backtest import BacktestBet, run_backtest
@@ -11,6 +13,9 @@ from .data.config import ProviderSettings, build_live_provider
 from .data.models import Tour
 from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
+from .services.live_sync import persist_live_rows
+from .storage.database import build_engine, create_schema
+from .storage.models import TennisMatch
 
 
 app = FastAPI(
@@ -145,6 +150,83 @@ async def live_matches(
         "matches": rows,
         "normalized_matches": normalized,
     }
+
+
+@app.post("/live/sync")
+async def sync_live_matches(
+    tour: Tour | None = Query(default=None),
+    include_point_history: bool = Query(default=False),
+):
+    """Fetch the live board from Cito and idempotently persist canonical matches."""
+    provider = _live_provider()
+    try:
+        rows = await provider.fetch_live_payload(
+            tour=tour,
+            include_point_history=include_point_history,
+        )
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Live data provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail="Live data provider returned an invalid response.") from error
+
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            result = persist_live_rows(session, rows)
+        result["delay"] = getattr(provider, "last_live_metadata", {}).get("delayed")
+        result["tour"] = tour.value if tour else "ALL"
+        return result
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="Live matches could not be persisted.") from error
+    finally:
+        engine.dispose()
+
+
+@app.get("/matches")
+async def stored_matches(
+    tour: Tour | None = Query(default=None),
+    status: str | None = Query(default=None, min_length=1, max_length=24),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Read the most recently updated canonical matches from local persistence."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            statement = select(TennisMatch).order_by(TennisMatch.updated_at.desc()).limit(limit)
+            if tour is not None:
+                statement = statement.where(TennisMatch.tour == tour.value)
+            if status is not None:
+                statement = statement.where(TennisMatch.status == status.lower())
+            records = session.scalars(statement).all()
+            return {
+                "count": len(records),
+                "matches": [
+                    {
+                        "id": row.id,
+                        "provider": row.provider,
+                        "external_id": row.external_id,
+                        "tour": row.tour,
+                        "status": row.status,
+                        "scheduled_at": row.scheduled_at.isoformat() if row.scheduled_at else None,
+                        "tournament_name": row.tournament_name,
+                        "surface": row.surface,
+                        "player_1_name": row.player_1_name,
+                        "player_2_name": row.player_2_name,
+                        "scores": row.scores,
+                        "best_of": row.best_of,
+                    }
+                    for row in records
+                ],
+            }
+    finally:
+        engine.dispose()
 
 
 @app.get("/live/{match_id}")
