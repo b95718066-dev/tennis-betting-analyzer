@@ -48,6 +48,7 @@ class CitoTennisProvider(HttpJsonProvider):
             timeout_seconds=timeout_seconds,
             client=client,
         )
+        self.last_live_metadata: dict[str, Any] = {}
 
     async def fetch_live_payload(
         self,
@@ -64,6 +65,13 @@ class CitoTennisProvider(HttpJsonProvider):
         payload = await self.get_json("matches/live", params=params or None)
         if not isinstance(payload, dict):
             raise ValueError("Cito live response must be a JSON object.")
+        self.last_live_metadata = {
+            "delayed": payload.get("delayed"),
+            "total": payload.get("total"),
+            "page": payload.get("page"),
+            "page_size": payload.get("page_size"),
+            "total_pages": payload.get("total_pages"),
+        }
         # Cito Tennis list endpoints use {success, items, ...}; accept the legacy
         # data key as a compatibility fallback for older upstream responses.
         rows = payload.get("items")
