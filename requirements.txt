@@ -13,5 +13,6 @@ httpx
 tenacity
 python-dotenv
 pytest
+pytest-asyncio
 pytest-cov
 ruff
