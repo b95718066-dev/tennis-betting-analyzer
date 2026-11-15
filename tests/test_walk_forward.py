@@ -41,7 +41,7 @@ def test_walk_forward_same_timestamp_predictions_are_frozen_before_updates():
     ]
     rows += [
         _row("same-a", "2025-01-07T10:00:00+00:00", "a", "b", "a"),
-        _row("same-b", "2025-01-07T10:00:00+00:00", "b", "a", "b"),
+        _row("same-b", "2025-01-07T10:00:00+00:00", "b", "a", "a"),
         _row("later", "2025-01-08T10:00:00+00:00", "a", "b", "a"),
     ]
     with Session(engine) as session, session.begin():
