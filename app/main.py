@@ -16,6 +16,7 @@ from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
 from .services.live_sync import persist_live_rows
 from .services.odds_sync import persist_odds_events
+from .services.live_value import analyze_stored_live_match
 from .storage.database import build_engine, create_schema
 from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, TennisMatch
 from .storage.repository import save_odds_snapshot
@@ -51,6 +52,15 @@ class LiveProbabilityRequest(BaseModel):
     player_1_odds: float | None = Field(default=None, gt=1)
     player_2_odds: float | None = Field(default=None, gt=1)
     min_ev: float = Field(default=0.03, ge=0, le=1)
+
+
+class LiveValueAnalysisRequest(BaseModel):
+    player_1_serve_point_win: float = Field(gt=0, lt=1)
+    player_2_serve_point_win: float = Field(gt=0, lt=1)
+    min_ev: float = Field(default=0.03, ge=0, le=1)
+    bookmaker: str | None = Field(default=None, min_length=1, max_length=120)
+    stake: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    auto_record: bool = True
 
 
 class PredictionJournalRequest(BaseModel):
@@ -303,6 +313,33 @@ async def stored_match_odds(match_id: str):
                     for item in observations
                 ],
             }
+    finally:
+        engine.dispose()
+
+
+@app.post("/matches/{match_id}/analyze-live")
+async def analyze_live_match_value(match_id: str, request: LiveValueAnalysisRequest):
+    """Price a synced live score against a fresh, linked, complete bookmaker market."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            try:
+                return analyze_stored_live_match(
+                    session,
+                    match_id=match_id,
+                    player_1_serve_point_win=request.player_1_serve_point_win,
+                    player_2_serve_point_win=request.player_2_serve_point_win,
+                    min_ev=request.min_ev,
+                    bookmaker=request.bookmaker,
+                    stake=request.stake,
+                    auto_record=request.auto_record,
+                )
+            except LookupError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
     finally:
         engine.dispose()
 
