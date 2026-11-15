@@ -89,3 +89,33 @@ def test_rows_without_ids_are_skipped():
         result = persist_historical_rows(session, [{"date": "2026-01-01"}])
         assert result["skipped"] == 1
     engine.dispose()
+
+
+
+def test_verified_start_time_is_preserved_but_unknown_start_time_stays_date_only():
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    rows = [
+        {
+            "id": "known-time", "date": "2026-06-01",
+            "starts_at": "2026-06-01T14:30:00+00:00",
+            "start_time_known": True, "start_time_kind": "scheduled",
+            "player1": {"id": "p1"}, "player2": {"id": "p2"},
+            "winner_id": "p1",
+        },
+        {
+            "id": "unknown-time", "date": "2026-06-01",
+            "starts_at": "2026-06-01T14:30:00+00:00",
+            "start_time_known": False,
+            "player1": {"id": "p1"}, "player2": {"id": "p3"},
+            "winner_id": "p1",
+        },
+    ]
+    with Session(engine) as session, session.begin():
+        persist_historical_rows(session, rows)
+        from app.storage.models import HistoricalMatchSnapshot
+        known = session.query(HistoricalMatchSnapshot).filter_by(external_id="known-time").one()
+        unknown = session.query(HistoricalMatchSnapshot).filter_by(external_id="unknown-time").one()
+        assert known.match_date == "2026-06-01T14:30:00+00:00"
+        assert unknown.match_date == "2026-06-01"
+    engine.dispose()
