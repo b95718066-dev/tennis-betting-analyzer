@@ -157,7 +157,19 @@ def analyze_stored_live_match(
             })
     created = []
     if auto_record:
+        now = datetime.now(timezone.utc)
         for candidate in candidates:
+            existing = session.scalar(select(PredictionRecord).where(
+                PredictionRecord.event_id == match.external_id,
+                PredictionRecord.market == "match_winner",
+                PredictionRecord.selection == candidate["selection"],
+                PredictionRecord.odds_decimal == candidate["odds_decimal"],
+                PredictionRecord.status == "open",
+                PredictionRecord.placed_at >= now.replace(microsecond=0) - __import__("datetime").timedelta(minutes=15),
+            ).limit(1))
+            if existing is not None:
+                created.append(existing.id)
+                continue
             row = PredictionRecord(
                 event_id=match.external_id, market="match_winner",
                 selection=candidate["selection"], probability=candidate["probability"],
