@@ -64,10 +64,13 @@ class CitoTennisProvider(HttpJsonProvider):
         payload = await self.get_json("matches/live", params=params or None)
         if not isinstance(payload, dict):
             raise ValueError("Cito live response must be a JSON object.")
-        # Cito REST responses use the shared {success, data, meta} envelope.
-        rows = payload.get("data")
+        # Cito Tennis list endpoints use {success, items, ...}; accept the legacy
+        # data key as a compatibility fallback for older upstream responses.
+        rows = payload.get("items")
+        if rows is None:
+            rows = payload.get("data")
         if payload.get("success") is not True or not isinstance(rows, list):
-            raise ValueError("Cito live response must contain success=true and a 'data' list.")
+            raise ValueError("Cito live response must contain success=true and an 'items' list.")
         if not all(isinstance(row, dict) for row in rows):
             raise ValueError("Cito live response contains a non-object match row.")
         return rows
