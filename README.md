@@ -75,7 +75,13 @@ When `TENNIS_LIVE_PROVIDER=cito` and `TENNIS_DATA_API_KEY` are configured:
 - `GET /live?include_point_history=true` requests point history where the provider has it.
 - `GET /live/{match_id}` returns detailed live state for one match.
 
-The live routes return provider payloads without guessing player identity or score mappings. Provider errors are surfaced as sanitized HTTP 502 responses; a missing API key returns HTTP 503. Cito documents a free allowance of 500 requests/month and approximately 60-second live-data delay on Free and Starter plans; confirm current limits and plan terms in the provider dashboard before production use.
+The live board returns both the raw provider payload and rows that satisfy the canonical match contract in `normalized_matches`; `normalized_count` and `unmapped_count` make mapping coverage explicit. Provider errors are surfaced as sanitized HTTP 502 responses; a missing API key returns HTTP 503. Cito's Free response indicates delayed live data (the tested dashboard showed approximately 60 seconds); confirm current limits and plan terms in the provider dashboard before production use.
+
+### Live probability endpoint
+
+`POST /live/probability` prices the current game, current set and match winner from an explicit score state. Required inputs include sets, games, point score, current server, best-of format and each player's point-win probability on serve. At 6-6, pass the tiebreak points and first server. Optional paired decimal odds produce margin-removed market probabilities, overround, expected value and value-bet flags.
+
+This is a transparent Markov baseline using constant serve-point probabilities, advantage games and a standard 7-point tiebreak (win by two). It is **not calibrated**, does not fetch odds, and must not be treated as an automated betting recommendation. Cito's connected feed supplies scores, not bookmaker prices; a separate licensed odds feed and validated serve statistics are required for production live pricing.
 
 
 ## Sprint 5: backtesting and model evaluation
