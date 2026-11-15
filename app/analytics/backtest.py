@@ -110,6 +110,7 @@ def run_backtest(
     max_drawdown_pct = 0.0
     total_staked = 0.0
     total_returned = 0.0
+    total_odds = 0.0
     net_profit = 0.0
     wins = 0
     losses = 0
@@ -132,6 +133,7 @@ def run_backtest(
         net_profit += profit
         total_staked += bet.stake
         total_returned += returned
+        total_odds += bet.odds_decimal
         wins += int(bet.outcome)
         losses += int(not bet.outcome)
         observations.append((bet.probability, bet.outcome))
@@ -173,7 +175,7 @@ def run_backtest(
             "net_profit": net_profit,
             "roi": net_profit / initial_bankroll,
             "yield": net_profit / total_staked if total_staked else 0.0,
-            "average_odds": sum(bet.odds_decimal for bet in ordered if bet.stake <= initial_bankroll) / settled,
+            "average_odds": total_odds / settled,
             "max_drawdown": max_drawdown,
             "max_drawdown_pct": max_drawdown_pct,
             "brier_score": brier,
