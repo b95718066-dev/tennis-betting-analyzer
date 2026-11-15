@@ -119,3 +119,23 @@ def test_verified_start_time_is_preserved_but_unknown_start_time_stays_date_only
         assert known.match_date == "2026-06-01T14:30:00+00:00"
         assert unknown.match_date == "2026-06-01"
     engine.dispose()
+
+
+def test_historical_participant_order_is_canonical_and_winner_identity_is_preserved():
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    rows = [{
+        "id": "winner-first",
+        "date": "2026-06-01T14:30:00+00:00",
+        "player1": {"id": "z-player"},
+        "player2": {"id": "a-player"},
+        "winner": {"id": "z-player"},
+    }]
+    with Session(engine) as session, session.begin():
+        persist_historical_rows(session, rows)
+        from app.storage.models import HistoricalMatchSnapshot
+        stored = session.query(HistoricalMatchSnapshot).filter_by(external_id="winner-first").one()
+        assert stored.player_1_id == "a-player"
+        assert stored.player_2_id == "z-player"
+        assert stored.winner_id == "z-player"
+    engine.dispose()
