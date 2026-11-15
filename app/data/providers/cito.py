@@ -35,12 +35,13 @@ class CitoTennisProvider(HttpJsonProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         timeout_seconds: float = 15.0,
         client=None,
     ) -> None:
         super().__init__(
             name=self.PROVIDER_NAME,
-            base_url=self.DEFAULT_BASE_URL,
+            base_url=base_url or self.DEFAULT_BASE_URL,
             api_key=api_key,
             api_key_header="x-api-key",
             api_key_prefix="",
