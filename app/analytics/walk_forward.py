@@ -1,0 +1,206 @@
+"""Leakage-safe expanding-window evaluation for historical Elo.
+
+Date-only archive rows can update ratings only after their calendar day. They
+are never scored out-of-sample because their true pre-match time is unknown.
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, datetime, time, timezone
+from math import log
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.analytics.elo import DEFAULT_K_FACTOR, DEFAULT_RATING, expected_probability, update_elo
+from app.analytics.historical_elo import MIN_SURFACE_MATCHES, SURFACE_WEIGHT, VALID_SURFACES
+from app.storage.models import HistoricalMatchSnapshot
+
+
+def _parse_match_date(value: str | None) -> tuple[datetime | None, bool]:
+    if not value:
+        return None, False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            day = date.fromisoformat(value[:10])
+        except ValueError:
+            return None, False
+        return datetime.combine(day, time.max, tzinfo=timezone.utc), True
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return datetime.combine(parsed.date(), time.max, tzinfo=timezone.utc), True
+    return parsed.astimezone(timezone.utc), False
+
+
+def _effective_rating(pid: str, surface: str, overall: dict[str, float],
+                      surface_ratings: dict[str, dict[str, float]],
+                      surface_counts: dict[str, dict[str, int]]) -> float:
+    base = overall.get(pid, DEFAULT_RATING)
+    count = surface_counts.get(surface, {}).get(pid, 0)
+    if count < MIN_SURFACE_MATCHES:
+        return base
+    specific = surface_ratings.get(surface, {}).get(pid, DEFAULT_RATING)
+    return base * (1.0 - SURFACE_WEIGHT) + specific * SURFACE_WEIGHT
+
+
+def walk_forward_historical_elo(
+    session: Session, *, surface: str | None = None,
+    min_training_matches: int = 10, calibration_bins: int = 10,
+    k_factor: float = DEFAULT_K_FACTOR,
+) -> dict[str, Any]:
+    """Predict timestamped historical matches before updating ratings with outcomes."""
+    if surface is not None and surface.lower() not in VALID_SURFACES:
+        raise ValueError("surface must be hard, clay, grass or carpet.")
+    if not isinstance(min_training_matches, int) or min_training_matches < 1:
+        raise ValueError("min_training_matches must be a positive integer.")
+    if not isinstance(calibration_bins, int) or not 2 <= calibration_bins <= 50:
+        raise ValueError("calibration_bins must be between 2 and 50.")
+    rows = session.scalars(select(HistoricalMatchSnapshot).where(
+        HistoricalMatchSnapshot.provider == "cito",
+        HistoricalMatchSnapshot.match_date.is_not(None),
+        HistoricalMatchSnapshot.winner_id.is_not(None),
+        HistoricalMatchSnapshot.player_1_id.is_not(None),
+        HistoricalMatchSnapshot.player_2_id.is_not(None),
+    )).all()
+
+    usable = []
+    invalid = 0
+    for row in rows:
+        parsed, date_only = _parse_match_date(row.match_date)
+        if parsed is None or row.winner_id not in {row.player_1_id, row.player_2_id} or row.player_1_id == row.player_2_id:
+            invalid += 1
+            continue
+        row_surface = (row.surface or "").lower()
+        if surface and row_surface != surface.lower():
+            continue
+        if row_surface not in VALID_SURFACES:
+            row_surface = "unknown"
+        usable.append((parsed, date_only, row.id, row, row_surface))
+    usable.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    overall: dict[str, float] = {}
+    overall_counts: dict[str, int] = defaultdict(int)
+    surface_ratings: dict[str, dict[str, float]] = defaultdict(dict)
+    surface_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    predictions: list[tuple[float, bool]] = []
+    scored = 0
+    warmup_skipped = 0
+    date_only_skipped = 0
+    prediction_rows = []
+
+    # Equal timestamps are predicted from the same frozen state, then updated.
+    index = 0
+    while index < len(usable):
+        timestamp = usable[index][0]
+        group = []
+        while index < len(usable) and usable[index][0] == timestamp:
+            group.append(usable[index])
+            index += 1
+
+        pending_updates = []
+        for _, is_date_only, _, row, row_surface in group:
+            p1, p2, winner = row.player_1_id, row.player_2_id, row.winner_id
+            if is_date_only:
+                date_only_skipped += 1
+            else:
+                trained = min(overall_counts[p1], overall_counts[p2])
+                if trained < min_training_matches:
+                    warmup_skipped += 1
+                else:
+                    active_surface = row_surface if row_surface in VALID_SURFACES else "hard"
+                    r1 = _effective_rating(p1, active_surface, overall, surface_ratings, surface_counts)
+                    r2 = _effective_rating(p2, active_surface, overall, surface_ratings, surface_counts)
+                    probability = expected_probability(r1, r2)
+                    outcome = winner == p1
+                    predictions.append((probability, outcome))
+                    scored += 1
+                    prediction_rows.append({
+                        "match_id": row.external_id,
+                        "match_date": row.match_date,
+                        "player_1_id": p1,
+                        "player_2_id": p2,
+                        "player_1_win_probability": round(probability, 6),
+                        "outcome_player_1_won": outcome,
+                        "player_1_pre_match_elo": round(r1, 2),
+                        "player_2_pre_match_elo": round(r2, 2),
+                        "prior_matches_player_1": overall_counts[p1],
+                        "prior_matches_player_2": overall_counts[p2],
+                    })
+            pending_updates.append((p1, p2, winner, row_surface))
+
+        for p1, p2, winner, row_surface in pending_updates:
+            r1, r2 = overall.get(p1, DEFAULT_RATING), overall.get(p2, DEFAULT_RATING)
+            n1, n2 = update_elo(r1, r2, 1.0 if winner == p1 else 0.0, k_factor)
+            overall[p1], overall[p2] = n1, n2
+            overall_counts[p1] += 1
+            overall_counts[p2] += 1
+            if row_surface in VALID_SURFACES:
+                ratings = surface_ratings[row_surface]
+                counts = surface_counts[row_surface]
+                s1, s2 = ratings.get(p1, DEFAULT_RATING), ratings.get(p2, DEFAULT_RATING)
+                sn1, sn2 = update_elo(s1, s2, 1.0 if winner == p1 else 0.0, k_factor)
+                ratings[p1], ratings[p2] = sn1, sn2
+                counts[p1] += 1
+                counts[p2] += 1
+
+    if not predictions:
+        metrics = None
+        calibration = []
+    else:
+        n = len(predictions)
+        brier = sum((p - float(y)) ** 2 for p, y in predictions) / n
+        eps = 1e-15
+        log_loss = -sum(float(y) * log(max(p, eps)) + (1.0 - float(y)) * log(max(1.0 - p, eps)) for p, y in predictions) / n
+        wins = sum(y for _, y in predictions)
+        metrics = {
+            "matches": n,
+            "accuracy": sum((p >= 0.5) == y for p, y in predictions) / n,
+            "hit_rate_player_1": wins / n,
+            "brier_score": brier,
+            "log_loss": log_loss,
+        }
+        buckets: dict[int, list[tuple[float, bool]]] = defaultdict(list)
+        for p, y in predictions:
+            buckets[min(int(p * calibration_bins), calibration_bins - 1)].append((p, y))
+        calibration = [{
+            "bin_lower": i / calibration_bins,
+            "bin_upper": (i + 1) / calibration_bins,
+            "count": len(items),
+            "mean_predicted_probability": sum(p for p, _ in items) / len(items),
+            "observed_player_1_win_rate": sum(y for _, y in items) / len(items),
+        } for i, items in sorted(buckets.items())]
+
+    return {
+        "model": "expanding_window_historical_elo",
+        "surface_filter": surface.lower() if surface else None,
+        "metrics": metrics,
+        "calibration": calibration,
+        "coverage": {
+            "stored_rows_considered": len(rows),
+            "valid_rows": len(usable),
+            "out_of_sample_matches": scored,
+            "skipped_warmup": warmup_skipped,
+            "skipped_date_only": date_only_skipped,
+            "skipped_invalid": invalid,
+            "min_training_matches_per_player": min_training_matches,
+        },
+        "methodology": {
+            "rating_initial": DEFAULT_RATING,
+            "k_factor": k_factor,
+            "surface_weight": SURFACE_WEIGHT,
+            "minimum_surface_matches": MIN_SURFACE_MATCHES,
+            "walk_forward": "expanding window; prediction before outcome update",
+            "same_timestamp": "all matches at an identical timestamp are predicted before any result at that timestamp is applied",
+            "date_only_policy": "date-only rows are never scored and update ratings only at end of their calendar day",
+            "odds_roi": "not calculated: no verified timestamped pre-match odds join is included",
+        },
+        "sample_predictions": prediction_rows[:100],
+        "limitations": [
+            "This evaluates a transparent Elo baseline, not a trained or calibrated betting model.",
+            "Results depend on completeness and selection bias of the locally stored Cito archive.",
+            "No bookmaker baseline, odds ROI, fees, retirement adjustment, inactivity decay or doubles-specific model.",
+            "Date-only rows are excluded from scoring because their exact pre-match timestamp is unknown.",
+        ],
+    }
