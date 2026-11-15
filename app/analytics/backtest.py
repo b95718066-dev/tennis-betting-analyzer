@@ -1,7 +1,7 @@
 """Chronological backtesting and model calibration metrics.
 
-This module evaluates already-generated, out-of-sample predictions. It does not
-train a model or create historical predictions from future information.
+Evaluates already-generated, out-of-sample predictions. It does not train a
+model or create historical predictions from future information.
 """
 
 from __future__ import annotations
@@ -48,8 +48,7 @@ def chronological_split(
     ordered = sorted(records, key=lambda row: row[timestamp_field])
     if len(ordered) < 2:
         raise ValueError("At least two records are required for a chronological split.")
-    split_at = int(len(ordered) * train_fraction)
-    split_at = min(max(split_at, 1), len(ordered) - 1)
+    split_at = min(max(int(len(ordered) * train_fraction), 1), len(ordered) - 1)
     return ordered[:split_at], ordered[split_at:]
 
 
@@ -67,7 +66,7 @@ def _calibration(
         if not bucket:
             continue
         mean_predicted = sum(item[0] for item in bucket) / len(bucket)
-        observed_rate = sum(1.0 if item[1] else 0.0 for item in bucket) / len(bucket)
+        observed_rate = sum(float(item[1]) for item in bucket) / len(bucket)
         result.append({
             "bin_lower": index / bins,
             "bin_upper": (index + 1) / bins,
@@ -85,17 +84,20 @@ def run_backtest(
     initial_bankroll: float = 1000.0,
     calibration_bins: int = 10,
 ) -> dict:
-    """Evaluate settled bets in placement order with flat, recorded stakes.
+    """Evaluate bets with cash reserved at placement and returned at settlement.
 
-    ROI is net profit / initial bankroll. Yield is net profit / total stake
-    actually placed. Fees, taxes, cash-out and price slippage are not modelled.
+    ROI = net profit / initial bankroll. Yield = net profit / total stakes.
+    Fees, taxes, cash-out and price slippage are not modelled.
     """
     if not isfinite(initial_bankroll) or initial_bankroll <= 0:
         raise ValueError("initial_bankroll must be finite and positive.")
     if not isinstance(calibration_bins, int) or not 2 <= calibration_bins <= 50:
         raise ValueError("calibration_bins must be an integer between 2 and 50.")
 
-    validated = [item if isinstance(item, BacktestBet) else BacktestBet.model_validate(item) for item in bets]
+    validated = [
+        item if isinstance(item, BacktestBet) else BacktestBet.model_validate(item)
+        for item in bets
+    ]
     if not validated:
         raise ValueError("At least one settled bet is required.")
 
@@ -103,49 +105,66 @@ def run_backtest(
         if bet.settled_at <= bet.placed_at:
             raise ValueError("Each bet must settle after it was placed.")
 
-    ordered = sorted(validated, key=lambda item: item.placed_at)
-    bankroll = initial_bankroll
-    peak_bankroll = initial_bankroll
+    # Process settlements before placements at the same instant. Stakes are
+    # reserved when placed, so overlapping matches cannot reuse the same cash.
+    events = []
+    for index, bet in enumerate(validated):
+        events.append((bet.placed_at, 1, index, "place"))
+        events.append((bet.settled_at, 0, index, "settle"))
+    events.sort(key=lambda event: (event[0], event[1], event[2]))
+
+    cash = initial_bankroll
+    open_stakes: dict[int, float] = {}
+    accepted: set[int] = set()
+    peak_equity = initial_bankroll
     max_drawdown = 0.0
     max_drawdown_pct = 0.0
     total_staked = 0.0
     total_returned = 0.0
-    total_odds = 0.0
     net_profit = 0.0
     wins = 0
     losses = 0
     skipped = 0
     observations: list[tuple[float, bool]] = []
     equity_curve = [{
-        "placed_at": ordered[0].placed_at.isoformat(),
+        "timestamp": events[0][0].isoformat(),
+        "event": "initial",
         "bankroll": initial_bankroll,
         "drawdown": 0.0,
     }]
 
-    for bet in ordered:
-        if bet.stake > bankroll:
-            skipped += 1
-            continue
+    for timestamp, _, index, event_type in events:
+        bet = validated[index]
+        if event_type == "place":
+            if bet.stake > cash:
+                skipped += 1
+                continue
+            cash -= bet.stake
+            open_stakes[index] = bet.stake
+            accepted.add(index)
+            total_staked += bet.stake
+        elif index in accepted:
+            returned = bet.stake * bet.odds_decimal if bet.outcome else 0.0
+            cash += returned
+            total_returned += returned
+            profit = returned - bet.stake
+            net_profit += profit
+            wins += int(bet.outcome)
+            losses += int(not bet.outcome)
+            observations.append((bet.probability, bet.outcome))
+            open_stakes.pop(index, None)
 
-        profit = bet.stake * (bet.odds_decimal - 1.0) if bet.outcome else -bet.stake
-        returned = bet.stake * bet.odds_decimal if bet.outcome else 0.0
-        bankroll += profit
-        net_profit += profit
-        total_staked += bet.stake
-        total_returned += returned
-        total_odds += bet.odds_decimal
-        wins += int(bet.outcome)
-        losses += int(not bet.outcome)
-        observations.append((bet.probability, bet.outcome))
-
-        peak_bankroll = max(peak_bankroll, bankroll)
-        drawdown = peak_bankroll - bankroll
-        drawdown_pct = drawdown / peak_bankroll if peak_bankroll else 0.0
+        equity = cash + sum(open_stakes.values())
+        peak_equity = max(peak_equity, equity)
+        drawdown = peak_equity - equity
+        drawdown_pct = drawdown / peak_equity if peak_equity else 0.0
         max_drawdown = max(max_drawdown, drawdown)
         max_drawdown_pct = max(max_drawdown_pct, drawdown_pct)
         equity_curve.append({
-            "placed_at": bet.placed_at.isoformat(),
-            "bankroll": bankroll,
+            "timestamp": timestamp.isoformat(),
+            "event": event_type,
+            "event_id": bet.event_id,
+            "bankroll": equity,
             "drawdown": drawdown,
         })
 
@@ -169,13 +188,13 @@ def run_backtest(
             "losses": losses,
             "hit_rate": wins / settled,
             "initial_bankroll": initial_bankroll,
-            "final_bankroll": bankroll,
+            "final_bankroll": cash,
             "total_staked": total_staked,
             "total_returned": total_returned,
             "net_profit": net_profit,
             "roi": net_profit / initial_bankroll,
             "yield": net_profit / total_staked if total_staked else 0.0,
-            "average_odds": total_odds / settled,
+            "average_odds": sum(validated[index].odds_decimal for index in accepted) / settled,
             "max_drawdown": max_drawdown,
             "max_drawdown_pct": max_drawdown_pct,
             "brier_score": brier,
@@ -184,9 +203,9 @@ def run_backtest(
         "calibration": _calibration(observations, calibration_bins),
         "equity_curve": equity_curve,
         "methodology": {
-            "ordering": "placed_at ascending",
+            "ordering": "timestamped placement and settlement events",
             "prediction_timing": "placed_at must precede settled_at",
-            "stake_policy": "fixed recorded stake; bets exceeding available bankroll are skipped",
+            "stake_policy": "stake reserved at placement; insufficient available cash causes a skipped bet",
             "fees_included": False,
             "slippage_included": False,
             "metrics_scope": "executed bets only",
