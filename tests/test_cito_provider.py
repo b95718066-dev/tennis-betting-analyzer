@@ -1,4 +1,4 @@
-""""Contract tests for the Cito live-score adapter."""
+"""Contract tests for the Cito live-score adapter."""
 
 import httpx
 import pytest
