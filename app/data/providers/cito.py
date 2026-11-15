@@ -49,10 +49,19 @@ class CitoTennisProvider(HttpJsonProvider):
             client=client,
         )
 
-    async def fetch_live_payload(self, *, tour: Tour | None = None) -> list[dict[str, Any]]:
-        """Return raw live rows without guessing provider-to-domain field mappings."""
-        params = {"tour": tour.value} if tour in (Tour.ATP, Tour.WTA) else None
-        payload = await self.get_json("matches/live", params=params)
+    async def fetch_live_payload(
+        self,
+        *,
+        tour: Tour | None = None,
+        include_point_history: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return raw live rows; optional point history follows the Cito API contract."""
+        params: dict[str, Any] = {}
+        if tour in (Tour.ATP, Tour.WTA):
+            params["tour"] = tour.value
+        if include_point_history:
+            params["include"] = "point_history"
+        payload = await self.get_json("matches/live", params=params or None)
         if not isinstance(payload, dict):
             raise ValueError("Cito live response must be a JSON object.")
         rows = payload.get("items")
