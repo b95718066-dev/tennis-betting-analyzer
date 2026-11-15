@@ -85,3 +85,26 @@ def test_odds_api_skips_invalid_event_or_invalid_price():
     })
     assert len(rows) == 1
     assert rows[0].selection == "Player Two"
+
+
+@pytest.mark.asyncio
+async def test_fetch_sports_returns_only_tennis_keys():
+    seen = {}
+
+    def handler(request: httpx.Request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json=[
+            {"key": "tennis_atp_french_open", "title": "French Open"},
+            {"key": "soccer_epl", "title": "EPL"},
+            {"key": "tennis_wta_miami_open", "title": "Miami Open"},
+        ])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = TheOddsApiProvider(api_key="test-secret", client=client)
+        sports = await provider.fetch_sports()
+
+    assert [item["key"] for item in sports] == [
+        "tennis_atp_french_open", "tennis_wta_miami_open"
+    ]
+    assert "/sports?" in seen["url"]
+    assert "apiKey=test-secret" in seen["url"]
