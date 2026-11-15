@@ -131,3 +131,42 @@ async def test_live_sync_persists_matches_and_stored_matches_can_be_read(monkeyp
     assert stored_response.status_code == 200
     assert stored_response.json()["count"] == 1
     assert stored_response.json()["matches"][0]["external_id"] == "sync-match-1"
+
+
+@pytest.mark.asyncio
+async def test_odds_sync_persists_bookmaker_snapshots(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+
+    class FakeOddsProvider:
+        async def fetch_tennis_odds(self, *, sport_key, regions="eu", markets="h2h,spreads,totals"):
+            updated = datetime.now(timezone.utc).isoformat()
+            return [{
+                "id": "odds-event-api-1",
+                "commence_time": updated,
+                "bookmakers": [{
+                    "key": "book-a",
+                    "last_update": updated,
+                    "markets": [{
+                        "key": "h2h",
+                        "last_update": updated,
+                        "outcomes": [
+                            {"name": "Player One", "price": 1.85},
+                            {"name": "Player Two", "price": 2.05},
+                        ],
+                    }],
+                }],
+            }]
+
+    monkeypatch.setattr(api, "_odds_provider", lambda: FakeOddsProvider())
+    monkeypatch.setenv("TENNIS_ODDS_PROVIDER", "the_odds_api")
+    monkeypatch.setenv("THE_ODDS_API_KEY", "test-key")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'odds-sync.db'}")
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/odds/sync?sport_key=tennis_atp_french_open")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["events_fetched"] == 1
+    assert body["snapshots_inserted"] == 2
+    assert body["sport_key"] == "tennis_atp_french_open"
