@@ -83,3 +83,17 @@ def test_provider_settings_default_to_no_external_provider(monkeypatch):
     assert settings.historical_provider == "none"
     assert settings.live_provider == "none"
     assert settings.odds_provider == "none"
+
+
+def test_provider_settings_load_independent_odds_api_credentials(monkeypatch):
+    monkeypatch.setenv("TENNIS_LIVE_PROVIDER", "cito")
+    monkeypatch.setenv("TENNIS_DATA_API_KEY", "cito-key")
+    monkeypatch.setenv("TENNIS_ODDS_PROVIDER", "the_odds_api")
+    monkeypatch.setenv("THE_ODDS_API_KEY", "odds-key")
+    monkeypatch.setenv("THE_ODDS_API_REGIONS", "eu,uk")
+    settings = ProviderSettings.from_env()
+
+    assert settings.api_key == "cito-key"
+    assert settings.odds_api_key == "odds-key"
+    assert settings.odds_api_regions == "eu,uk"
+    assert settings.odds_provider == "the_odds_api"
