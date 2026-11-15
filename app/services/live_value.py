@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -165,7 +165,7 @@ def analyze_stored_live_match(
                 PredictionRecord.selection == candidate["selection"],
                 PredictionRecord.odds_decimal == candidate["odds_decimal"],
                 PredictionRecord.status == "open",
-                PredictionRecord.placed_at >= now.replace(microsecond=0) - __import__("datetime").timedelta(minutes=15),
+                PredictionRecord.placed_at >= now.replace(microsecond=0) - timedelta(minutes=15),
             ).limit(1))
             if existing is not None:
                 created.append(existing.id)
