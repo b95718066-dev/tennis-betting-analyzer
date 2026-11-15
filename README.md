@@ -121,3 +121,28 @@ The adapter converts only bookmaker outcomes actually returned into timestamped 
 - `POST /predictions/{id}/settle?outcome=true` settles a record once. Duplicate settlement returns HTTP 409; unknown IDs return HTTP 404.
 - `GET /predictions/metrics` reports settled-only hit rate, ROI, yield, net profit, Brier score and maximum drawdown. With no settled records, it explicitly reports that metrics are unavailable.
 - Journal ROI and yield are both net profit divided by total recorded stake. Metrics exclude fees, taxes, slippage and cash-out. The journal stores a probability snapshot but does not yet auto-generate predictions or place bets.
+
+
+## Sprint 8: live value-bet analysis
+
+After syncing the Cito board and The Odds API snapshots, call `POST /matches/{cito_match_id}/analyze-live` with both players' serve-point-win rates. The service joins the canonical Cito match to a uniquely linked odds event, requires a complete same-bookmaker h2h pair, rejects odds older than 15 minutes, prices the exact current score with the Markov engine, and returns EV/value-bet flags. Positive-threshold candidates can be automatically written to the prediction journal; set `auto_record=false` for analysis only.
+
+Example request body:
+
+```json
+{
+  "player_1_serve_point_win": 0.68,
+  "player_2_serve_point_win": 0.64,
+  "min_ev": 0.03,
+  "stake": 1.0,
+  "auto_record": true
+}
+```
+
+**Important safeguards and current limitations:**
+- Serve-point-win rates are explicit request inputs. They are not fabricated from the Cito scoreboard; connect a verified player-statistics feed before automating these inputs.
+- A tiebreak analysis requires Cito to supply both the tiebreak score and first server. If first-server identity is missing, analysis is rejected rather than guessed.
+- Only linked, complete match-winner (h2h) odds from one bookmaker and one timestamp are used. Spread/total markets are not priced by this live match-winner model.
+- Odds must be no older than 15 minutes. Refresh the odds feed before scanning again.
+- Repeated scans do not create a duplicate open journal entry for the same match, selection and price within 15 minutes.
+- This is an experimental, uncalibrated probability model. A value flag is a model estimate, not a guarantee or a betting instruction.
