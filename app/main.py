@@ -11,7 +11,8 @@ from .analytics.backtest import BacktestBet, run_backtest
 from .analytics.walk_forward import walk_forward_historical_elo
 from .analytics.probability import remove_margin, expected_value, value_bet
 from .analytics.live_probability import calculate_live_probabilities
-from .analytics.serve_stats import normalize_live_serve_rates
+from .analytics.serve_stats import normalize_live_match_stats, normalize_live_serve_rates
+from .analytics.historical_elo import historical_elo_ratings
 from .data.config import ProviderSettings, build_live_provider, build_odds_provider
 from .data.models import Tour
 from .data.normalization import normalize_cito_live_match
@@ -442,7 +443,36 @@ async def analyze_live_match_value_auto(
             except ValueError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
         result["serve_statistics"] = stats
+        result["extended_live_statistics"] = normalize_live_match_stats(payload)
         result["serve_point_win_rates_source"] = "cito_live_match_stats"
+
+        # Keep historical Elo separate from the in-play Markov price until an
+        # ensemble has passed leakage-safe walk-forward calibration.
+        with factory() as history_session:
+            stored = history_session.scalar(select(TennisMatch).where(
+                TennisMatch.provider == "cito", TennisMatch.external_id == match_id,
+            ))
+            if (
+                stored is not None and stored.player_1_id and stored.player_2_id
+                and stored.surface in {"hard", "clay", "grass", "carpet"}
+            ):
+                result["historical_elo_signal"] = historical_elo_ratings(
+                    history_session, player_id=stored.player_1_id,
+                    opponent_id=stored.player_2_id,
+                    before=datetime.now(timezone.utc).isoformat(),
+                    surface=stored.surface,
+                )
+            else:
+                result["historical_elo_signal"] = {
+                    "available": False,
+                    "reason": "Stable Cito player IDs or a supported surface are missing; no identity was guessed.",
+                }
+        result["probability_comparison"] = {
+            "live_markov": result["probability_model"]["player_1_match_probability"],
+            "historical_elo": result["historical_elo_signal"].get("player_win_probability_elo"),
+            "combined_probability": None,
+            "reason": "Signals remain separate until walk-forward calibration validates an ensemble.",
+        }
         return result
     finally:
         engine.dispose()
