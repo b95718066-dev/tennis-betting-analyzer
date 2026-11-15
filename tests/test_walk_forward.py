@@ -49,8 +49,9 @@ def test_walk_forward_same_timestamp_predictions_are_frozen_before_updates():
         persist_historical_rows(session, rows)
         result = walk_forward_historical_elo(session, min_training_matches=5)
         scored = {x["match_id"]: x for x in result["sample_predictions"]}
-        assert scored["same-a"]["player_1_pre_match_elo"] == scored["same-b"]["player_2_pre_match_elo"]
-        assert scored["same-a"]["player_1_win_probability"] == pytest.approx(1.0 - scored["same-b"]["player_1_win_probability"], abs=1e-6)
+        assert scored["same-a"]["player_1_pre_match_elo"] == scored["same-b"]["player_1_pre_match_elo"]
+        assert scored["same-a"]["player_2_pre_match_elo"] == scored["same-b"]["player_2_pre_match_elo"]
+        assert scored["same-a"]["player_1_win_probability"] == pytest.approx(scored["same-b"]["player_1_win_probability"], abs=1e-6)
         assert scored["later"]["player_1_pre_match_elo"] > scored["same-a"]["player_1_pre_match_elo"]
     engine.dispose()
 
