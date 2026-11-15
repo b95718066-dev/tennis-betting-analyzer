@@ -151,7 +151,8 @@ Example request body:
 ## Sprint 9: automatic live serve statistics
 
 - `GET /matches/{cito_match_id}/serve-stats` requests the detailed Cito live match state with structured statistics and reports each player's service-point win rate when valid won/played counts are present.
+- `POST /matches/{cito_match_id}/analyze-live/auto` fetches those statistics directly, validates both players' service-point counts, and passes the resulting rates into the Sprint 8 live Markov + fresh-odds analysis and prediction journal. Request options are `min_ev`, `bookmaker`, `stake`, and `auto_record`; no serve-rate values need to be supplied.
 - Rates are computed only as service points won divided by service points played. Missing statistics, unavailable-stat codes, zero denominators and inconsistent counts remain unavailable; the endpoint never fills gaps with estimates.
 - The endpoint exposes `ready_for_live_model`. Live analysis can use the returned rates as inputs to Sprint 8's Markov pricing endpoint.
 - Cito's Free plan delays live endpoints by approximately 60 seconds and has a 500-request monthly allowance according to its current documentation. Account-specific quotas and exact response coverage must be monitored.
-- This sprint adds the verified statistics retrieval and normalization layer. Automatic end-to-end live pricing from these rates, historical player priors, and confidence/sample-size weighting remain follow-up work.
+- The automatic route returns HTTP 422 with Cito's availability reason when the stats are missing or incomplete; it never falls back to guessed rates. Historical player priors, confidence/sample-size weighting, and automated periodic scanning remain follow-up work.
