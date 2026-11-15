@@ -58,6 +58,14 @@ def _side_stats(stats: Any, side: int) -> tuple[float, float] | None:
             # per-player numerator/denominator objects. Only accept the
             # service-points-won row; percentage-only rows are not sufficient.
             if label in SERVE_WON_KEYS:
+                # The live-board response can flatten each metric into one row:
+                # {"key":"service_points_won","side":1,"numerator":18,"denominator":29}.
+                # Accept only the explicitly tagged side; never infer the other side.
+                row_side = row.get("side")
+                if row_side == side:
+                    found = _metric_pair(row)
+                    if found:
+                        return found
                 for name in side_names:
                     if name in row:
                         found = _metric_pair(row[name])
