@@ -51,7 +51,11 @@ def _side_stats(stats: Any, side: int) -> tuple[float, float] | None:
             if not isinstance(row, dict):
                 continue
             label = str(row.get("key") or row.get("name") or row.get("stat") or "").lower()
-            if label.replace("-", "_").replace(" ", "_") in SERVE_WON_KEYS | SERVE_PLAYED_KEYS:
+            label = label.replace("-", "_").replace(" ", "_")
+            # Cito's live catalog represents each statistic as one row with
+            # per-player numerator/denominator objects. Only accept the
+            # service-points-won row; percentage-only rows are not sufficient.
+            if label in SERVE_WON_KEYS:
                 for name in side_names:
                     if name in row:
                         found = _metric_pair(row[name])
