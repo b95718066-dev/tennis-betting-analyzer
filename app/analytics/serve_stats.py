@@ -128,3 +128,44 @@ def normalize_live_serve_rates(payload: dict[str, Any]) -> dict[str, Any]:
         "source": "cito_live_match_stats",
         "limitations": [] if complete else ["Cito has not supplied valid service-point won/played counts for both players."],
     }
+
+
+LIVE_METRIC_KEYS = {
+    "aces", "double_faults", "service_points_won", "first_serve_points_won",
+    "second_serve_points_won", "break_points_saved", "break_points_won",
+    "first_return_points_won", "second_return_points_won",
+    "service_games_won", "total_games_won", "total_points_won",
+    "points_won_last_10", "max_points_in_a_row", "max_games_in_a_row",
+}
+
+
+def normalize_live_match_stats(payload: dict[str, Any]) -> dict[str, Any]:
+    """Expose only explicitly identified Cito live metrics; preserve count pairs."""
+    players: dict[int, dict[str, Any]] = {1: {}, 2: {}}
+    stats = payload.get("stats")
+    if isinstance(stats, list):
+        for row in stats:
+            if not isinstance(row, dict):
+                continue
+            key = str(row.get("key") or "").strip().lower().replace("-", "_").replace(" ", "_")
+            if key not in LIVE_METRIC_KEYS or row.get("side") not in (1, 2):
+                continue
+            side = row["side"]
+            numerator = _number(row.get("numerator"))
+            denominator = _number(row.get("denominator"))
+            if denominator is not None:
+                if numerator is None or numerator > denominator:
+                    continue
+                players[side][key] = {
+                    "numerator": int(numerator), "denominator": int(denominator),
+                    "rate": numerator / denominator if denominator > 0 else None,
+                }
+            elif numerator is not None:
+                players[side][key] = {"count": int(numerator)}
+    return {
+        "provider": "cito",
+        "stats_available": bool(payload.get("stats_available")),
+        "stats_unavailable_code": payload.get("stats_unavailable_code"),
+        "players": [{"side": side, "metrics": players[side]} for side in (1, 2)],
+        "source": "cito_live_match_stats",
+    }
