@@ -165,3 +165,13 @@ Example request body:
 - The automatic live-analysis response includes these diagnostics under `serve_statistics.serve_point_win_rates[].sample_confidence`.
 - No historical player prior is currently blended into the live rate. A trustworthy player- and surface-specific historical service-points dataset is not yet persisted in this project; inventing a prior or treating match-win form as serve-point form would be statistically unsound.
 - Historical form integration remains a separate next step: ingest timestamped player match/stat records, enforce a pre-match cutoff to prevent leakage, and validate any prior/shrinkage weights with chronological backtests before using them in live pricing.
+
+
+## Sprint 11: historical player data access
+
+- The Cito adapter now exposes a paginated historical archive request with tour, year, surface, player and include=stats filters. It validates query inputs and preserves the provider's items and pagination metadata.
+- GET /players/{player_id}/history retrieves a player's newest-first match log, with optional surface/year filters and statistics.
+- GET /players/{player_id}/form retrieves Cito's documented recent-form endpoint, including opponent-rank context when supplied by Cito.
+- These endpoints return provider records without fabricating missing statistics. The history route is a retrieval layer; it does not yet persist archive rows or calculate a serve-point prior.
+- Use canonical Cito player IDs (for example, IDs returned by player search), not display names. For chronological model evaluation, each feature must be cut off at the prediction timestamp; tournament-start dates for older archive eras are not exact match dates and must not be treated as exact-day evidence.
+- Next work: controlled historical ingestion with resumable pagination, immutable match-stat snapshots, late-stat refresh, and walk-forward backtests with strict timestamp cutoffs.
