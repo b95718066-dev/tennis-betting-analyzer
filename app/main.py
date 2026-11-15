@@ -9,13 +9,15 @@ from .analytics.prediction import predict_match
 from .analytics.backtest import BacktestBet, run_backtest
 from .analytics.probability import remove_margin, expected_value, value_bet
 from .analytics.live_probability import calculate_live_probabilities
-from .data.config import ProviderSettings, build_live_provider
+from .data.config import ProviderSettings, build_live_provider, build_odds_provider
 from .data.models import Tour
 from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
 from .services.live_sync import persist_live_rows
+from .services.odds_sync import persist_odds_events
 from .storage.database import build_engine, create_schema
 from .storage.models import TennisMatch
+from .storage.repository import save_odds_snapshot
 
 
 app = FastAPI(
@@ -64,6 +66,17 @@ class PredictionRequest(BaseModel):
     min_ev: float = Field(default=0.03, ge=0, le=1)
 
 
+def _odds_provider():
+    settings = ProviderSettings.from_env()
+    if settings.odds_provider == "none":
+        raise HTTPException(status_code=503, detail="Odds provider is not configured.")
+    if settings.odds_provider != "the_odds_api":
+        raise HTTPException(status_code=503, detail="Configured odds provider is not supported.")
+    if not settings.odds_api_key:
+        raise HTTPException(status_code=503, detail="Odds provider API key is not configured.")
+    return build_odds_provider(settings)
+
+
 def _live_provider():
     settings = ProviderSettings.from_env()
     if settings.live_provider == "none":
@@ -95,6 +108,8 @@ async def provider_capabilities():
     if settings.live_provider == "cito":
         return {
             "live_provider": "cito",
+            "odds_provider": settings.odds_provider,
+            "odds_provider_configured": bool(settings.odds_api_key),
             "configured": bool(settings.api_key),
             "capabilities": {
                 "live_scores": True,
@@ -106,6 +121,8 @@ async def provider_capabilities():
         }
     return {
         "live_provider": settings.live_provider,
+        "odds_provider": settings.odds_provider,
+        "odds_provider_configured": bool(settings.odds_api_key),
         "configured": False,
         "capabilities": {
             "live_scores": False,
@@ -183,6 +200,45 @@ async def sync_live_matches(
         return result
     except Exception as error:
         raise HTTPException(status_code=500, detail="Live matches could not be persisted.") from error
+    finally:
+        engine.dispose()
+
+
+@app.post("/odds/sync")
+async def sync_tennis_odds(
+    sport_key: str = Query(min_length=8, max_length=100),
+    regions: str | None = Query(default=None, min_length=2, max_length=40),
+    markets: str | None = Query(default=None, min_length=3, max_length=40),
+):
+    """Fetch available tennis odds and persist timestamped bookmaker snapshots."""
+    settings = ProviderSettings.from_env()
+    provider = _odds_provider()
+    try:
+        events = await provider.fetch_tennis_odds(
+            sport_key=sport_key,
+            regions=regions or settings.odds_api_regions,
+            markets=markets or settings.odds_api_markets,
+        )
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Odds provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            result = persist_odds_events(session, events)
+        result["sport_key"] = sport_key
+        result["regions"] = regions or settings.odds_api_regions
+        result["markets"] = markets or settings.odds_api_markets
+        return result
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="Odds snapshots could not be persisted.") from error
     finally:
         engine.dispose()
 
