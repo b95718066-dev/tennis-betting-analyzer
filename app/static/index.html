@@ -88,7 +88,7 @@ async function findForecastPlayer(side){
  const select=$('p'+side+'-select');select.innerHTML='<option value="">Ищу игроков…</option>';
  try{
   const data=await get(url);const players=data.players||[];
-  select.innerHTML=players.length?'<option value="">Выбери игрока</option>'+players.map(p=>'<option value="'+esc(p.player_id)+'">'+esc(p.name)+' · '+esc(p.tour||'')+' · матчей в архиве: '+Number(p.matches_in_archive||0)+'</option>').join(''):'<option value="">Игрок не найден в локальном архиве</option>';
+  select.innerHTML=players.length?'<option value="">Выбери игрока</option>'+players.map(p=>'<option value="'+esc(p.player_id)+'">'+esc(p.name)+' · '+esc(p.tour||'')+' · '+esc(p.provider||'')+' · матчей в архиве: '+Number(p.matches_in_archive||0)+'</option>').join(''):'<option value="">Игрок не найден в локальном архиве</option>';
  }catch(e){select.innerHTML='<option value="">Поиск недоступен</option>';alert('Не удалось найти игроков: '+e.message);}
 }
 $('find-p1').addEventListener('click',()=>findForecastPlayer(1));
