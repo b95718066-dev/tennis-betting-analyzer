@@ -29,8 +29,6 @@ def _latest_complete_h2h(
     session: Session, match_id: str, player_1: str, player_2: str,
     bookmaker: str | None = None,
 ) -> list[dict[str, Any]]:
-    if session.get(TennisMatch, -1) is not None:
-        pass
     # The unified Tennis API uses one live event ID for both score and odds.
     # This avoids a fuzzy cross-vendor event-link step entirely.
     direct = session.scalars(select(OddsObservation).where(
@@ -86,7 +84,7 @@ def analyze_stored_live_match(
         TennisMatch.provider.in_({"cito", "tennis_api"}),
     ))
     if match is None:
-        raise LookupError("Live match not found. Sync the Cito live board first.")
+        raise LookupError("Live match not found. Sync the configured live board first.")
     if match.status != "live":
         raise ValueError("Only matches with live status can be analyzed.")
     raw = match.raw or {}
