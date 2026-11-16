@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#080d18"><title>Tennis Betting Analyzer</title>
+<style>
+:root{color-scheme:dark;--bg:#080d18;--panel:#111a2b;--line:#24324a;--muted:#91a0b8;--text:#f2f5fb;--green:#41d6a0;--blue:#73a7ff;--amber:#ffc66d}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% 0%,#182b49 0,transparent 42%),var(--bg);color:var(--text);font:15px Inter,system-ui,-apple-system,sans-serif}header{max-width:1200px;margin:auto;padding:28px 22px 18px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:flex;gap:13px;align-items:center}.logo{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,#41d6a0,#3986ff);display:grid;place-items:center;color:#07111c;font-weight:900;font-size:22px}.sub,.muted{color:var(--muted)}h1{font-size:21px;margin:0 0 4px}main{max-width:1200px;margin:auto;padding:0 22px 50px}.top{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:12px 0 22px}.card,.panel{background:linear-gradient(145deg,#131f33,#0e1727);border:1px solid var(--line);border-radius:17px;padding:18px}.metric{font-size:25px;font-weight:750;margin-top:8px}.section{display:flex;align-items:center;justify-content:space-between;margin:22px 0 12px;gap:12px}h2{font-size:17px;margin:0}.filters{display:flex;gap:8px;flex-wrap:wrap}button,select{border:1px solid var(--line);background:#17243a;color:var(--text);padding:9px 13px;border-radius:10px;cursor:pointer}button.active{background:#1c4c46;border-color:#328b74;color:#a6ffdc}.match{display:grid;grid-template-columns:minmax(0,1fr) 110px 90px;gap:12px;align-items:center;padding:16px 0;border-bottom:1px solid var(--line)}.match:last-child{border:0}.players{font-weight:650;line-height:1.8}.score{font-size:20px;font-weight:750;text-align:center}.tag{font-size:11px;color:var(--green);letter-spacing:.08em}.odds{text-align:right;font-variant-numeric:tabular-nums}.empty{padding:32px;text-align:center;color:var(--muted)}.pill{display:inline-block;border-radius:20px;background:#1b2a40;color:#b9c9e3;padding:4px 8px;font-size:11px}.footer{font-size:12px;color:var(--muted);padding:18px 2px}.status{font-size:12px;color:var(--green)}a{color:var(--blue)}@media(max-width:700px){header{padding-top:20px}.top{grid-template-columns:repeat(2,1fr)}.match{grid-template-columns:minmax(0,1fr) 75px 65px;padding:13px 0}.card{padding:14px}.metric{font-size:22px}.section{align-items:flex-start;flex-direction:column}}
+</style></head><body>
+<header><div class="brand"><div class="logo">T</div><div><h1>Tennis Betting Analyzer</h1><div class="sub">ATP · WTA · LIVE ANALYTICS</div></div></div><div class="status" id="connection">● Подключение…</div></header>
+<main><div class="top">
+<div class="card"><div class="muted">Матчи в базе</div><div class="metric" id="m-matches">—</div><div class="muted">Сохранённые матчи</div></div>
+<div class="card"><div class="muted">Live сейчас</div><div class="metric" id="m-live">—</div><div class="muted">Данные провайдера</div></div>
+<div class="card"><div class="muted">Прогнозы</div><div class="metric" id="m-predictions">—</div><div class="muted">В журнале</div></div>
+<div class="card"><div class="muted">ROI</div><div class="metric" id="m-roi">—</div><div class="muted">Только по закрытым ставкам</div></div>
+</div>
+<div class="section"><h2>Матчи в реальном времени</h2><div class="filters"><button class="active" data-tour="ALL">Все</button><button data-tour="ATP">ATP</button><button data-tour="WTA">WTA</button><button id="refresh">↻ Обновить</button></div></div>
+<section class="panel"><div id="matches" class="empty">Загружаю матчи…</div></section>
+<div class="section"><h2>Журнал прогнозов</h2><span class="pill">Проверка результатов</span></div><section class="panel"><div id="journal" class="empty">Загрузка статистики…</div></section>
+<div class="footer">Обновление по запросу · Cito Free может отдавать live-данные с задержкой около 60 секунд. Вероятности экспериментальные и не являются гарантией доходности. <a href="/docs">API документация</a></div></main>
+<script>
+let tour='ALL';
+const $=id=>document.getElementById(id);
+const fmt=x=>x==null?'—':Number(x).toFixed(2);
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function get(path){const r=await fetch(path,{headers:{accept:'application/json'}});if(!r.ok)throw Error(path+' '+r.status);return r.json();}
+function drawMatches(data){const rows=data.normalized_matches||[];$('m-live').textContent=rows.length;
+const filtered=rows.filter(m=>tour==='ALL'||String(m.tour||'').toUpperCase()===tour);
+if(!filtered.length){$('matches').innerHTML='<div class="empty">Сейчас нет доступных матчей для выбранного тура.</div>';return;}
+$('matches').innerHTML=filtered.map(m=>{const p=m.players||[];const names=p.map(x=>typeof x==='string'?x:(x.name||x.full_name||'Игрок')).slice(0,2);const score=m.score||{};const games=score.games||[];const scoreText=Array.isArray(games)?games.map(g=>typeof g==='object'?(g.player_1??g.p1??0)+'–'+(g.player_2??g.p2??0):g).join(' '):'';return '<div class="match"><div><div class="tag">'+esc(m.tour||'TENNIS')+' · '+esc(m.status||'LIVE')+'</div><div class="players">'+esc(names[0]||m.player_1||'Player 1')+'<br>'+esc(names[1]||m.player_2||'Player 2')+'</div><div class="muted">'+esc(m.tournament||m.event_name||'')+'</div></div><div class="score">'+esc(scoreText||'LIVE')+'</div><div class="odds muted">Live<br><span class="pill">score</span></div></div>';}).join('');}
+async function load(){ $('connection').textContent='● Обновление…';try{const [matches,stored,metrics]=await Promise.allSettled([get('/live'),get('/matches?limit=500'),get('/predictions/metrics')]);
+if(matches.status==='fulfilled')drawMatches(matches.value);else{$('matches').textContent='Live feed недоступен: '+matches.reason.message;$('m-live').textContent='—';}
+if(stored.status==='fulfilled')$('m-matches').textContent=stored.value.count??(stored.value.matches||[]).length??'—';else $('m-matches').textContent='—';
+if(metrics.status==='fulfilled'){const v=metrics.value;$('m-predictions').textContent=v.total_predictions??v.total??0;$('m-roi').textContent=v.roi==null?'—':(Number(v.roi)*100).toFixed(1)+'%';$('journal').textContent=v.message||('Закрыто прогнозов: '+(v.settled_predictions??0)+' · Hit rate: '+fmt(v.hit_rate));}else{$('m-predictions').textContent='—';$('journal').textContent='Статистика пока недоступна.';}
+$('connection').textContent='● API подключён';}catch(e){$('connection').textContent='● Ошибка соединения';}}
+document.querySelectorAll('[data-tour]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-tour]').forEach(x=>x.classList.remove('active'));b.classList.add('active');tour=b.dataset.tour;load();}));
+$('refresh').addEventListener('click',load);load();
+</script></body></html>
