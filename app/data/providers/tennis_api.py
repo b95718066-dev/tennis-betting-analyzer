@@ -117,8 +117,8 @@ class TennisApiProvider(HttpJsonProvider):
         event_id = row.get("id")
         p1 = row.get("player1") or {}
         p2 = row.get("player2") or {}
-        name1 = p1.get("name") if isinstance(p1, dict) else row.get("participant1")
-        name2 = p2.get("name") if isinstance(p2, dict) else row.get("participant2")
+        name1 = (p1.get("name") if isinstance(p1, dict) else None) or row.get("participant1")
+        name2 = (p2.get("name") if isinstance(p2, dict) else None) or row.get("participant2")
         if not event_id or not name1 or not name2:
             return None
         status = str(row.get("status") or "").casefold()
