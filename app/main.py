@@ -258,6 +258,88 @@ async def available_tennis_odds_sports(all_sports: bool = Query(default=False)):
         raise HTTPException(status_code=502, detail="Odds provider returned an invalid sports catalogue.") from error
 
 
+@app.get("/odds/diagnostics")
+async def odds_provider_diagnostics():
+    """Compare provider catalogue breadth, live-board breadth and persisted odds coverage."""
+    odds_provider = _odds_provider()
+    live_provider = _live_provider()
+    try:
+        sports = await odds_provider.fetch_sports(all_sports=True)
+        live_rows = await live_provider.fetch_live_payload()
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Provider diagnostics request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail="A provider returned invalid diagnostics data.") from error
+
+    active_sports = [row for row in sports if row.get("active") is True]
+    cito_tours: dict[str, int] = {}
+    cito_tournaments: dict[str, int] = {}
+    for row in live_rows:
+        tour = str(row.get("tour") or row.get("category") or "UNKNOWN").upper()
+        tournament = str(row.get("tournament_name") or row.get("tournament") or "UNKNOWN")
+        cito_tours[tour] = cito_tours.get(tour, 0) + 1
+        cito_tournaments[tournament] = cito_tournaments.get(tournament, 0) + 1
+
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            snapshot_count = session.query(OddsObservation).filter(
+                OddsObservation.provider == "the_odds_api"
+            ).count()
+            link_count = session.query(ProviderMatchLink).filter(
+                ProviderMatchLink.source_provider == "the_odds_api",
+                ProviderMatchLink.canonical_provider == "cito",
+            ).count()
+    finally:
+        engine.dispose()
+
+    active_tours = sorted({
+        "WTA" if "wta" in str(row.get("key", "")).lower()
+        else "ATP" if "atp" in str(row.get("key", "")).lower()
+        else "OTHER"
+        for row in active_sports
+    })
+    return {
+        "status": "coverage_gap" if not active_sports or not live_rows or link_count == 0 else "providers_active",
+        "odds_provider": {
+            "name": "the_odds_api",
+            "catalogue_tournaments": len(sports),
+            "active_tournaments": len(active_sports),
+            "active_tours": active_tours,
+            "active": [
+                {"key": row.get("key"), "title": row.get("title"), "description": row.get("description")}
+                for row in active_sports
+            ],
+        },
+        "live_provider": {
+            "name": "cito",
+            "live_matches": len(live_rows),
+            "matches_by_tour": dict(sorted(cito_tours.items())),
+            "matches_by_tournament": dict(sorted(cito_tournaments.items())),
+            "delayed": getattr(live_provider, "last_live_metadata", {}).get("delayed"),
+        },
+        "persistence": {
+            "odds_snapshots": snapshot_count,
+            "linked_events": link_count,
+        },
+        "limitations": [
+            "The sports catalogue reports tournament availability, not match-level event overlap.",
+            "This diagnostic does not request bookmaker event odds and does not consume odds-market quota.",
+            "A provider event must still match a unique Cito participant pair and start time before linking.",
+        ],
+        "next_step": (
+            "Wait for an active tournament to overlap with Cito's match board, then run odds sync."
+            if link_count == 0 else
+            "Review linked events and verify complete two-sided bookmaker markets before value analysis."
+        ),
+    }
+
+
 @app.get("/odds/coverage")
 async def odds_coverage():
     """Summarize persisted bookmaker coverage without exposing provider credentials."""
