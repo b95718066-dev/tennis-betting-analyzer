@@ -2,6 +2,7 @@ from typing import Any
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
@@ -123,11 +124,7 @@ def _live_provider():
 
 @app.get("/")
 async def root():
-    return {
-        "project": "Tennis Betting Analyzer",
-        "status": "running",
-        "version": app.version,
-    }
+    return FileResponse("app/static/index.html", media_type="text/html")
 
 
 @app.get("/health")
