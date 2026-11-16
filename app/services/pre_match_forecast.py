@@ -79,18 +79,26 @@ def generate_pre_match_forecast(
         before=cutoff.isoformat(),
         surface=normalized_surface,
     )
-    rows = session.scalars(
-        select(HistoricalMatchSnapshot).where(
-            HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
-            or_(
-                HistoricalMatchSnapshot.player_1_id.in_([player_1_id, player_2_id]),
-                HistoricalMatchSnapshot.player_2_id.in_([player_1_id, player_2_id]),
-            ),
-            HistoricalMatchSnapshot.match_date.is_not(None),
-            HistoricalMatchSnapshot.winner_id.is_not(None),
-        )
-    ).all()
+    statement = select(
+        HistoricalMatchSnapshot.id,
+        HistoricalMatchSnapshot.match_date,
+        HistoricalMatchSnapshot.surface,
+        HistoricalMatchSnapshot.player_1_id,
+        HistoricalMatchSnapshot.player_2_id,
+        HistoricalMatchSnapshot.winner_id,
+    ).where(
+        HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
+        or_(
+            HistoricalMatchSnapshot.player_1_id.in_([player_1_id, player_2_id]),
+            HistoricalMatchSnapshot.player_2_id.in_([player_1_id, player_2_id]),
+        ),
+        HistoricalMatchSnapshot.match_date.is_not(None),
+        HistoricalMatchSnapshot.winner_id.is_not(None),
+    ).order_by(HistoricalMatchSnapshot.match_date.asc(), HistoricalMatchSnapshot.id.asc())
 
+    # Forecast features need only six scalar columns. Avoid hydrating each
+    # JSON-heavy ORM row for players with long careers in the 480k-match archive.
+    rows = session.execute(statement.execution_options(yield_per=1000))
     eligible = [
         row for row in rows
         if _is_before(row.match_date, cutoff)
@@ -179,11 +187,16 @@ def search_historical_players(
 
     raw_text = cast(HistoricalMatchSnapshot.raw, String)
     escaped_query = normalized_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    statement = select(HistoricalMatchSnapshot).where(
+    filters = [
         HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
         HistoricalMatchSnapshot.player_1_id.is_not(None),
         HistoricalMatchSnapshot.player_2_id.is_not(None),
         raw_text.ilike(f"%{escaped_query}%", escape="\\"),
+    ]
+    if tour is not None:
+        filters.append(HistoricalMatchSnapshot.tour == tour.upper())
+    statement = select(HistoricalMatchSnapshot).where(
+        *filters,
     ).order_by(HistoricalMatchSnapshot.match_date.desc()).limit(5000)
     matching_rows = session.scalars(statement).all()
     sample_truncated = len(matching_rows) == 5000
