@@ -704,7 +704,7 @@ async def preview_admin_history_sync(
     token: str = Query(min_length=32, max_length=128),
     tour: str = Query(pattern="^(ATP|WTA)$"),
     year: int = Query(ge=2000, le=2026),
-    page: int = Query(default=1, ge=1, le=20),
+    page: int = Query(default=1, ge=1, le=60),
 ):
     """Temporary, token-gated one-page history import for isolated Preview only."""
     expected = os.getenv("PREVIEW_HISTORY_SYNC_TOKEN")
