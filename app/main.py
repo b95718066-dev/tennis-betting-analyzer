@@ -569,10 +569,32 @@ async def analyze_live_match_value_auto(
         )
 
     rates = stats["serve_point_win_rates"]
+    tennis_odds_sync = None
+    if provider.name == "tennis_api":
+        player_1_name = stats.get("player1_name")
+        player_2_name = stats.get("player2_name")
+        if not player_1_name or not player_2_name:
+            raise HTTPException(status_code=422, detail="Tennis API did not return player identities for this live event.")
+        try:
+            odds_payload = await provider.fetch_recent_odds(match_id, inplay=True)
+            odds_snapshots = provider.normalize_recent_odds(
+                odds_payload, event_id=match_id,
+                player_1_name=player_1_name, player_2_name=player_2_name,
+            )
+        except ProviderHttpError as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Tennis API odds request failed (HTTP {error.status_code or 'network error'}).",
+            ) from error
     engine = build_engine()
     try:
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
+        if provider.name == "tennis_api":
+            with factory.begin() as odds_session:
+                tennis_odds_sync = persist_odds_snapshots(
+                    odds_session, odds_snapshots, provider="tennis_api"
+                )
         with factory.begin() as session:
             try:
                 result = analyze_stored_live_match(
@@ -590,6 +612,8 @@ async def analyze_live_match_value_auto(
             except ValueError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
         result["serve_statistics"] = stats
+        if tennis_odds_sync is not None:
+            result["odds_sync"] = tennis_odds_sync
         result["extended_live_statistics"] = normalize_live_match_stats(payload)
         result["serve_point_win_rates_source"] = f"{provider.name}_live_match_stats"
 
