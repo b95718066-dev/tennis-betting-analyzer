@@ -154,42 +154,30 @@ async def health_check():
 @app.get("/providers")
 async def provider_capabilities():
     settings = ProviderSettings.from_env()
-    odds_configured = (settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key)) or (settings.odds_provider == "tennis_api" and bool(settings.tennis_api_key))
+    tennis_api_configured = bool(settings.tennis_api_key) and (
+        settings.live_provider == "tennis_api" or settings.odds_provider == "tennis_api"
+    )
+    odds_configured = (
+        settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key)
+    ) or tennis_api_configured
     return {
         "live_provider": settings.live_provider,
         "odds_provider": settings.odds_provider,
         "odds_provider_configured": odds_configured,
-        "configured": bool(settings.tennis_api_key) if settings.live_provider == "tennis_api" else bool(settings.api_key) if settings.live_provider == "cito" else False,
+        "configured": (
+            bool(settings.tennis_api_key) if settings.live_provider == "tennis_api"
+            else bool(settings.api_key) if settings.live_provider == "cito" else False
+        ),
         "capabilities": {
             "live_scores": settings.live_provider in {"cito", "tennis_api"},
             "point_by_point": settings.live_provider in {"cito", "tennis_api"},
             "historical_matches": settings.live_provider in {"cito", "tennis_api"},
             "pre_match_odds": odds_configured,
             "live_odds": odds_configured,
-            "odds_markets": ["h2h", "spreads", "totals"] if odds_configured else [],
-            "odds_coverage_note": "Tennis API uses one live event ID for score and odds; bookmaker and market availability varies by event.",
+            "odds_markets": ["h2h"] if tennis_api_configured else ["h2h", "spreads", "totals"] if odds_configured else [],
+            "odds_coverage_note": "Tennis API uses the same live event ID for scores and odds; actual bookmaker and market availability varies by event.",
         },
     }
-    return {
-        "live_provider": settings.live_provider,
-        "odds_provider": settings.odds_provider,
-        "odds_provider_configured": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
-        "odds_capabilities": {
-            "pre_match_odds": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
-            "live_odds": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
-            "markets": ["h2h", "spreads", "totals"],
-            "coverage_note": "Selected tennis tournaments only; actual markets vary by bookmaker and event.",
-        },
-        "configured": False,
-        "capabilities": {
-            "live_scores": False,
-            "point_by_point": False,
-            "historical_matches": False,
-            "pre_match_odds": False,
-            "live_odds": False,
-        },
-    }
-
 
 @app.get("/live")
 async def live_matches(
