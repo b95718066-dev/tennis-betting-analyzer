@@ -140,7 +140,7 @@ class TennisApiProvider(HttpJsonProvider):
         indicator = str(row.get("indicator") or "")
         server = 1 if indicator == "1,0" else 2 if indicator == "0,1" else None
         return {
-            "id": str(event_id), "canonical_id": str(event_id), "tour": str(row.get("tourType") or "ATP").upper(),
+            "id": str(event_id), "canonical_id": str(event_id), "provider": "tennis_api", "tour": str(row.get("tourType") or "ATP").upper(),
             "status": "IN_PROGRESS" if status == "live" else "COMPLETED" if status == "finished" else "SCHEDULED",
             "scheduled_at": scheduled, "tournament_name": tournament.get("name") or row.get("league"),
             "tournament_id": str(tournament.get("id")) if tournament.get("id") is not None else None,
