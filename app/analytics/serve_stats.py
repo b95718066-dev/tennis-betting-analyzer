@@ -1,4 +1,4 @@
-"""Normalize verified Cito live serve statistics without fabricating missing values."""
+"""Normalize verified live serve statistics without fabricating missing values."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def _find_serve_pair(node: Any) -> tuple[float, float] | None:
 
 
 def normalize_live_serve_rates(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return per-player service-point win rates when Cito supplies valid counts.
+    """Return per-player service-point win rates when the provider supplies valid counts.
 
     Rates are computed only as service points won / service points played.
     Missing, unavailable, or zero-denominator statistics remain unavailable.
@@ -120,13 +120,13 @@ def normalize_live_serve_rates(payload: dict[str, Any]) -> dict[str, Any]:
         })
     complete = all(player["available"] for player in players)
     return {
-        "provider": "cito",
+        "provider": str(payload.get("provider") or "cito"),
         "stats_available": bool(available) if available is not None else complete,
         "stats_unavailable_code": unavailable_code,
         "serve_point_win_rates": players,
         "ready_for_live_model": complete,
-        "source": "cito_live_match_stats",
-        "limitations": [] if complete else ["Cito has not supplied valid service-point won/played counts for both players."],
+        "source": f"{payload.get('provider') or 'cito'}_live_match_stats",
+        "limitations": [] if complete else ["The provider has not supplied valid service-point won/played counts for both players."],
     }
 
 

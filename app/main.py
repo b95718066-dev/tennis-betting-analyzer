@@ -21,7 +21,7 @@ from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
 from .services.live_sync import persist_live_rows
 from .services.historical_sync import persist_historical_rows, player_history_features
-from .services.odds_sync import persist_odds_events
+from .services.odds_sync import persist_odds_events, persist_odds_snapshots
 from .services.live_value import analyze_stored_live_match
 from .services.pre_match_forecast import generate_pre_match_forecast, search_historical_players
 from .storage.database import build_engine, create_schema
@@ -133,9 +133,10 @@ def _live_provider():
     settings = ProviderSettings.from_env()
     if settings.live_provider == "none":
         raise HTTPException(status_code=503, detail="Live data provider is not configured.")
-    if settings.live_provider != "cito":
+    if settings.live_provider not in {"cito", "tennis_api"}:
         raise HTTPException(status_code=503, detail="Configured live provider is not supported.")
-    if not settings.api_key:
+    configured_key = settings.tennis_api_key if settings.live_provider == "tennis_api" else settings.api_key
+    if not configured_key:
         raise HTTPException(status_code=503, detail="Live provider API key is not configured.")
     return build_live_provider(settings)
 
@@ -153,42 +154,30 @@ async def health_check():
 @app.get("/providers")
 async def provider_capabilities():
     settings = ProviderSettings.from_env()
-    odds_configured = settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key)
+    tennis_api_configured = bool(settings.tennis_api_key) and (
+        settings.live_provider == "tennis_api" or settings.odds_provider == "tennis_api"
+    )
+    odds_configured = (
+        settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key)
+    ) or tennis_api_configured
     return {
         "live_provider": settings.live_provider,
         "odds_provider": settings.odds_provider,
         "odds_provider_configured": odds_configured,
-        "configured": bool(settings.api_key) if settings.live_provider == "cito" else False,
+        "configured": (
+            bool(settings.tennis_api_key) if settings.live_provider == "tennis_api"
+            else bool(settings.api_key) if settings.live_provider == "cito" else False
+        ),
         "capabilities": {
-            "live_scores": settings.live_provider == "cito",
-            "point_by_point": settings.live_provider == "cito",
-            "historical_matches": settings.live_provider == "cito",
+            "live_scores": settings.live_provider in {"cito", "tennis_api"},
+            "point_by_point": settings.live_provider in {"cito", "tennis_api"},
+            "historical_matches": settings.live_provider in {"cito", "tennis_api"},
             "pre_match_odds": odds_configured,
             "live_odds": odds_configured,
-            "odds_markets": ["h2h", "spreads", "totals"] if odds_configured else [],
-            "odds_coverage_note": "Selected tennis tournaments only; actual markets vary by bookmaker and event.",
+            "odds_markets": ["h2h"] if tennis_api_configured else ["h2h", "spreads", "totals"] if odds_configured else [],
+            "odds_coverage_note": "Tennis API uses the same live event ID for scores and odds; actual bookmaker and market availability varies by event.",
         },
     }
-    return {
-        "live_provider": settings.live_provider,
-        "odds_provider": settings.odds_provider,
-        "odds_provider_configured": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
-        "odds_capabilities": {
-            "pre_match_odds": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
-            "live_odds": settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key),
-            "markets": ["h2h", "spreads", "totals"],
-            "coverage_note": "Selected tennis tournaments only; actual markets vary by bookmaker and event.",
-        },
-        "configured": False,
-        "capabilities": {
-            "live_scores": False,
-            "point_by_point": False,
-            "historical_matches": False,
-            "pre_match_odds": False,
-            "live_odds": False,
-        },
-    }
-
 
 @app.get("/live")
 async def live_matches(
@@ -251,6 +240,11 @@ async def sync_live_matches(
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory.begin() as session:
             result = persist_live_rows(session, rows)
+        result["odds_sync"] = {
+            "provider": provider.name,
+            "automatic_sync": False,
+            "note": "Event odds are fetched on demand when a user requests analysis, to conserve API quota.",
+        }
         result["delay"] = getattr(provider, "last_live_metadata", {}).get("delayed")
         result["tour"] = tour.value if tour else "ALL"
         return result
@@ -360,37 +354,52 @@ async def odds_provider_diagnostics():
 
 @app.get("/odds/coverage")
 async def odds_coverage():
-    """Summarize persisted bookmaker coverage without exposing provider credentials."""
+    """Summarize saved odds by provider, including event-native Tennis API quotes."""
     engine = build_engine()
     try:
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory() as session:
-            rows = session.scalars(
-                select(OddsObservation).where(OddsObservation.provider == "the_odds_api")
-            ).all()
-            links = session.scalars(
-                select(ProviderMatchLink).where(
-                    ProviderMatchLink.source_provider == "the_odds_api",
-                    ProviderMatchLink.canonical_provider == "cito",
-                )
-            ).all()
-            latest = max((row.captured_at for row in rows), default=None)
-            age_seconds = None
-            if latest is not None:
-                if latest.tzinfo is None or latest.utcoffset() is None:
+            rows = session.scalars(select(OddsObservation)).all()
+            links = session.scalars(select(ProviderMatchLink)).all()
+            by_provider = {}
+            for row in rows:
+                item = by_provider.setdefault(row.provider, {
+                    "snapshots": 0, "events": set(), "bookmakers": set(), "markets": set(),
+                    "latest": None,
+                })
+                item["snapshots"] += 1
+                item["events"].add(row.external_match_id)
+                item["bookmakers"].add(row.bookmaker)
+                item["markets"].add(row.market)
+                if item["latest"] is None or row.captured_at > item["latest"]:
+                    item["latest"] = row.captured_at
+            summary = {}
+            for name, item in by_provider.items():
+                latest = item["latest"]
+                if latest is not None and (latest.tzinfo is None or latest.utcoffset() is None):
                     latest = latest.replace(tzinfo=timezone.utc)
-                age_seconds = round((datetime.now(timezone.utc) - latest.astimezone(timezone.utc)).total_seconds(), 1)
+                age = round((datetime.now(timezone.utc) - latest.astimezone(timezone.utc)).total_seconds(), 1) if latest else None
+                summary[name] = {
+                    "snapshots": item["snapshots"], "events": len(item["events"]),
+                    "bookmakers": sorted(item["bookmakers"]), "markets": sorted(item["markets"]),
+                    "latest_snapshot_at": latest.isoformat() if latest else None,
+                    "latest_snapshot_age_seconds": age,
+                    "fresh_within_15m": age is not None and -60 <= age <= 900,
+                }
+            primary = "tennis_api" if "tennis_api" in summary else "the_odds_api"
+            selected = summary.get(primary, {
+                "snapshots": 0, "events": 0, "bookmakers": [], "markets": [],
+                "latest_snapshot_at": None, "latest_snapshot_age_seconds": None,
+                "fresh_within_15m": False,
+            })
             return {
-                "provider": "the_odds_api",
-                "snapshots": len(rows),
-                "linked_events": len(links),
-                "bookmakers": sorted({row.bookmaker for row in rows}),
-                "markets": sorted({row.market for row in rows}),
-                "latest_snapshot_at": latest.isoformat() if latest else None,
-                "latest_snapshot_age_seconds": age_seconds,
-                "fresh_within_15m": age_seconds is not None and -60 <= age_seconds <= 900,
-                "note": "A linked event is not necessarily a complete two-sided market; live analysis checks that separately.",
+                "provider": primary, **selected,
+                "linked_events": selected.get("events", 0) if primary == "tennis_api" else sum(
+                    1 for link in links if link.source_provider == "the_odds_api"
+                ),
+                "providers": summary,
+                "note": "Tennis API odds use the same live event ID as the score; bookmaker availability and freshness are event-specific.",
             }
     finally:
         engine.dispose()
@@ -467,45 +476,48 @@ async def sync_tennis_odds(
 
 @app.get("/matches/{match_id}/odds")
 async def stored_match_odds(match_id: str):
-    """Return bookmaker snapshots linked to a canonical Cito match ID."""
+    """Return odds stored under the same Tennis API event ID or linked legacy odds."""
     engine = build_engine()
     try:
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory() as session:
-            links = session.scalars(
-                select(ProviderMatchLink).where(
-                    ProviderMatchLink.canonical_provider == "cito",
-                    ProviderMatchLink.canonical_external_id == match_id,
-                )
-            ).all()
-            event_ids = [link.source_external_id for link in links]
-            if not event_ids:
-                return {"match_id": match_id, "matched_odds_events": 0, "count": 0, "odds": []}
             observations = session.scalars(
                 select(OddsObservation)
                 .where(
-                    OddsObservation.provider == "the_odds_api",
-                    OddsObservation.external_match_id.in_(event_ids),
+                    OddsObservation.provider == "tennis_api",
+                    OddsObservation.external_match_id == match_id,
                 )
                 .order_by(OddsObservation.captured_at.desc())
             ).all()
+            event_ids = [match_id] if observations else []
+            if not observations:
+                links = session.scalars(select(ProviderMatchLink).where(
+                    ProviderMatchLink.canonical_provider == "cito",
+                    ProviderMatchLink.canonical_external_id == match_id,
+                    ProviderMatchLink.source_provider == "the_odds_api",
+                )).all()
+                event_ids = [link.source_external_id for link in links]
+                if event_ids:
+                    observations = session.scalars(
+                        select(OddsObservation)
+                        .where(
+                            OddsObservation.provider == "the_odds_api",
+                            OddsObservation.external_match_id.in_(event_ids),
+                        )
+                        .order_by(OddsObservation.captured_at.desc())
+                    ).all()
             return {
                 "match_id": match_id,
                 "matched_odds_events": len(event_ids),
                 "count": len(observations),
                 "odds": [
                     {
-                        "provider": item.provider,
-                        "external_match_id": item.external_match_id,
-                        "bookmaker": item.bookmaker,
-                        "market": item.market,
-                        "selection": item.selection,
-                        "odds_decimal": item.odds_decimal,
-                        "captured_at": item.captured_at.isoformat(),
-                        "is_live": item.is_live,
-                    }
-                    for item in observations
+                        "provider": item.provider, "external_match_id": item.external_match_id,
+                        "bookmaker": item.bookmaker, "market": item.market,
+                        "selection": item.selection, "odds_decimal": item.odds_decimal,
+                        "captured_at": item.captured_at.isoformat(), "is_live": item.is_live,
+                    } for item in observations
                 ],
             }
     finally:
@@ -557,10 +569,33 @@ async def analyze_live_match_value_auto(
         )
 
     rates = stats["serve_point_win_rates"]
+    tennis_odds_sync = None
+    if provider.name == "tennis_api":
+        player_1_name = stats.get("player1_name")
+        player_2_name = stats.get("player2_name")
+        if not player_1_name or not player_2_name:
+            raise HTTPException(status_code=422, detail="Tennis API did not return player identities for this live event.")
+        try:
+            odds_payload = await provider.fetch_recent_odds(match_id, inplay=True)
+            odds_snapshots = provider.normalize_recent_odds(
+                odds_payload, event_id=match_id,
+                player_1_name=player_1_name, player_2_name=player_2_name,
+            )
+        except (ProviderHttpError, ValueError) as error:
+            status = error.status_code if isinstance(error, ProviderHttpError) else None
+            raise HTTPException(
+                status_code=502,
+                detail=f"Tennis API odds request failed (HTTP {status or 'upstream error'}).",
+            ) from error
     engine = build_engine()
     try:
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
+        if provider.name == "tennis_api":
+            with factory.begin() as odds_session:
+                tennis_odds_sync = persist_odds_snapshots(
+                    odds_session, odds_snapshots, provider="tennis_api"
+                )
         with factory.begin() as session:
             try:
                 result = analyze_stored_live_match(
@@ -578,16 +613,23 @@ async def analyze_live_match_value_auto(
             except ValueError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
         result["serve_statistics"] = stats
+        if tennis_odds_sync is not None:
+            result["odds_sync"] = tennis_odds_sync
         result["extended_live_statistics"] = normalize_live_match_stats(payload)
-        result["serve_point_win_rates_source"] = "cito_live_match_stats"
+        result["serve_point_win_rates_source"] = f"{provider.name}_live_match_stats"
 
         # Keep historical Elo separate from the in-play Markov price until an
         # ensemble has passed leakage-safe walk-forward calibration.
         with factory() as history_session:
             stored = history_session.scalar(select(TennisMatch).where(
-                TennisMatch.provider == "cito", TennisMatch.external_id == match_id,
+                TennisMatch.provider == provider.name, TennisMatch.external_id == match_id,
             ))
-            if (
+            if provider.name != "cito":
+                result["historical_elo_signal"] = {
+                    "available": False,
+                    "reason": "Tennis API player IDs are not yet identity-mapped to the imported historical archive.",
+                }
+            elif (
                 stored is not None and stored.player_1_id and stored.player_2_id
                 and stored.surface in {"hard", "clay", "grass", "carpet"}
             ):
@@ -608,7 +650,7 @@ async def analyze_live_match_value_auto(
             "combined_probability": None,
             "reason": "Signals remain separate until walk-forward calibration validates an ensemble.",
         }
-        if os.getenv("TENNIS_SMART_MATCH_WATCHLIST_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        if provider.name == "cito" and os.getenv("TENNIS_SMART_MATCH_WATCHLIST_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
             with factory.begin() as watch_session:
                 watch_match(watch_session, match_id, source="analyzed")
             result["watchlist"] = {"enabled": True, "watching": True, "match_id": match_id}

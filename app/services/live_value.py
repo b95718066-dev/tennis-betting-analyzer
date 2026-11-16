@@ -29,19 +29,29 @@ def _latest_complete_h2h(
     session: Session, match_id: str, player_1: str, player_2: str,
     bookmaker: str | None = None,
 ) -> list[dict[str, Any]]:
-    links = session.scalars(select(ProviderMatchLink).where(
-        ProviderMatchLink.canonical_provider == "cito",
-        ProviderMatchLink.canonical_external_id == match_id,
-        ProviderMatchLink.source_provider == "the_odds_api",
-    )).all()
-    event_ids = [link.source_external_id for link in links]
-    if not event_ids:
-        return []
-    rows = session.scalars(select(OddsObservation).where(
-        OddsObservation.provider == "the_odds_api",
-        OddsObservation.external_match_id.in_(event_ids),
+    # The unified Tennis API uses one live event ID for both score and odds.
+    # This avoids a fuzzy cross-vendor event-link step entirely.
+    direct = session.scalars(select(OddsObservation).where(
+        OddsObservation.provider == "tennis_api",
+        OddsObservation.external_match_id == match_id,
         OddsObservation.market == "h2h",
     ).order_by(OddsObservation.captured_at.desc())).all()
+    if direct:
+        rows = direct
+    else:
+        links = session.scalars(select(ProviderMatchLink).where(
+            ProviderMatchLink.canonical_provider == "cito",
+            ProviderMatchLink.canonical_external_id == match_id,
+            ProviderMatchLink.source_provider == "the_odds_api",
+        )).all()
+        event_ids = [link.source_external_id for link in links]
+        if not event_ids:
+            return []
+        rows = session.scalars(select(OddsObservation).where(
+            OddsObservation.provider == "the_odds_api",
+            OddsObservation.external_match_id.in_(event_ids),
+            OddsObservation.market == "h2h",
+        ).order_by(OddsObservation.captured_at.desc())).all()
     grouped: dict[tuple[str, datetime], dict[str, Any]] = defaultdict(dict)
     for row in rows:
         if bookmaker and row.bookmaker != bookmaker:
@@ -70,10 +80,11 @@ def analyze_stored_live_match(
     auto_record: bool = True,
 ) -> dict[str, Any]:
     match = session.scalar(select(TennisMatch).where(
-        TennisMatch.provider == "cito", TennisMatch.external_id == match_id,
+        TennisMatch.external_id == match_id,
+        TennisMatch.provider.in_({"cito", "tennis_api"}),
     ))
     if match is None:
-        raise LookupError("Live match not found. Sync the Cito live board first.")
+        raise LookupError("Live match not found. Sync the configured live board first.")
     if match.status != "live":
         raise ValueError("Only matches with live status can be analyzed.")
     raw = match.raw or {}
@@ -192,5 +203,5 @@ def analyze_stored_live_match(
         "probability_model": result,
         "value_bets": candidates,
         "journal_prediction_ids": created,
-        "serve_point_win_rates_source": "explicit_request_inputs; not inferred from Cito score feed",
+        "serve_point_win_rates_source": "explicit_request_inputs; not inferred from score feed",
     }

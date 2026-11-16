@@ -124,7 +124,7 @@ def normalize_cito_live_match(row: dict[str, Any]) -> dict[str, Any] | None:
     winner = row.get("winner")
     winner_id = winner.get("canonical_id") or winner.get("id") if isinstance(winner, dict) else None
     match = MatchRecord(
-        provider="cito",
+        provider=str(row.get("provider") or "cito"),
         external_id=external_id,
         tour=tour,
         status=_status(row.get("status")),

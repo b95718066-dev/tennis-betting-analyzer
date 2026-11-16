@@ -101,3 +101,27 @@ def persist_odds_events(
         "events_matched_to_cito": matched,
         "events_unmatched_to_cito": len(events) - matched,
     }
+
+
+def persist_odds_snapshots(session: Session, snapshots: list[Any], *, provider: str) -> dict[str, int | str]:
+    """Persist normalized immutable odds snapshots for an event-native provider."""
+    inserted = 0
+    duplicates = 0
+    invalid = 0
+    for snapshot in snapshots:
+        if getattr(snapshot, "provider", None) != provider:
+            invalid += 1
+            continue
+        try:
+            _, was_inserted = save_odds_snapshot(session, snapshot)
+        except (TypeError, ValueError):
+            invalid += 1
+            continue
+        inserted += int(was_inserted)
+        duplicates += int(not was_inserted)
+    return {
+        "provider": provider,
+        "snapshots_inserted": inserted,
+        "snapshots_deduplicated": duplicates,
+        "snapshots_invalid": invalid,
+    }
