@@ -102,3 +102,42 @@ def test_prediction_returns_complementary_probabilities():
     )
     assert result["player_probability"] + result["opponent_probability"] == pytest.approx(1.0)
     assert 0.0 <= result["player_probability"] <= 1.0
+
+
+def test_prediction_uses_elo_as_anchor_when_secondary_history_is_missing():
+    result = predict_match(
+        player="A", opponent="B", player_rating=1600, opponent_rating=1500,
+        player_matches=[], opponent_matches=[], h2h_matches=[], surface="Hard",
+    )
+    assert result["player_probability"] == pytest.approx(expected_probability(1600, 1500), abs=0.0001)
+    assert result["data_quality"]["coverage"] == "sparse"
+    assert result["methodology"]["calibration_status"] == "not_calibrated"
+
+
+def test_single_head_to_head_result_is_shrunk_and_cannot_dominate_elo():
+    baseline = predict_match(
+        player="A", opponent="B", player_rating=1600, opponent_rating=1500,
+        player_matches=[], opponent_matches=[], h2h_matches=[], surface="Hard",
+    )
+    with_one_h2h = predict_match(
+        player="A", opponent="B", player_rating=1600, opponent_rating=1500,
+        player_matches=[], opponent_matches=[],
+        h2h_matches=[{"player": "A", "opponent": "B", "winner": "A", "surface": "Hard"}],
+        surface="Hard",
+    )
+    assert with_one_h2h["player_probability"] > baseline["player_probability"]
+    assert with_one_h2h["player_probability"] - baseline["player_probability"] < 0.01
+    assert with_one_h2h["signal_details"]["head_to_head"]["sample_support"] < 0.2
+
+
+def test_form_and_surface_adjustments_are_sample_shrunk_and_probabilities_sum_to_one():
+    result = predict_match(
+        player="A", opponent="B", player_rating=1500, opponent_rating=1500,
+        player_matches=[{"result": "W", "surface": "Hard"}],
+        opponent_matches=[{"result": "L", "surface": "Hard"}],
+        h2h_matches=[], surface="Hard",
+    )
+    assert result["player_probability"] > 0.5
+    assert result["player_probability"] + result["opponent_probability"] == pytest.approx(1.0)
+    assert result["signal_details"]["player_surface"]["sample_support"] < 0.2
+    assert result["data_quality"]["meaning"].startswith("Input-history coverage")

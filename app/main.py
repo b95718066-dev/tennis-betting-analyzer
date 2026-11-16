@@ -21,12 +21,11 @@ from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
 from .services.live_sync import persist_live_rows
 from .services.historical_sync import persist_historical_rows, player_history_features
-from .storage.models import HistoricalMatchSnapshot
 from .services.odds_sync import persist_odds_events
 from .services.live_value import analyze_stored_live_match
+from .services.pre_match_forecast import generate_pre_match_forecast, search_historical_players
 from .storage.database import build_engine, create_schema
 from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, SmartMatchWatchlist, TennisMatch
-from .storage.repository import save_odds_snapshot
 from .services.smart_watchlist import (
     extract_match_status, is_terminal_match_status,
     list_watched_matches, unwatch_match, watch_match,
@@ -107,6 +106,16 @@ class PredictionRequest(BaseModel):
     player_odds: float | None = Field(default=None, gt=1)
     opponent_odds: float | None = Field(default=None, gt=1)
     min_ev: float = Field(default=0.03, ge=0, le=1)
+
+
+class PreMatchForecastRequest(BaseModel):
+    player_1_id: str = Field(min_length=1, max_length=180)
+    player_2_id: str = Field(min_length=1, max_length=180)
+    surface: str = Field(pattern="(?i)^(hard|clay|grass|carpet)$")
+    before: datetime | None = None
+    player_1_odds: float | None = Field(default=None, gt=1, allow_inf_nan=False)
+    player_2_odds: float | None = Field(default=None, gt=1, allow_inf_nan=False)
+    min_ev: float = Field(default=0.03, ge=0, le=1, allow_inf_nan=False)
 
 
 def _odds_provider():
@@ -764,14 +773,14 @@ async def get_player_historical_stats(
     surface: str | None = Query(default=None, pattern="^(hard|clay|grass|carpet)$"),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
-    """Aggregate prior Cito serve/return counts without using future match data."""
+    """Return prior Cito match-result features without inferring serve/return rates."""
     engine = build_engine()
     try:
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory() as session:
             try:
-                return historical_player_stats(
+                return player_history_features(
                     session, player_id=player_id, before=before,
                     surface=surface, limit=limit,
                 )
@@ -810,8 +819,10 @@ async def get_historical_elo_matchup(
 @app.get("/backtest/historical-elo")
 async def backtest_historical_elo(
     surface: str | None = Query(default=None, pattern="^(hard|clay|grass|carpet)$"),
+    tour: str | None = Query(default=None, pattern="^(?i:ATP|WTA)$"),
     min_training_matches: int = Query(default=10, ge=1, le=1000),
     calibration_bins: int = Query(default=10, ge=2, le=50),
+    min_ev: float = Query(default=0.03, ge=0, le=1),
 ):
     """Run expanding-window Elo evaluation using stored history only."""
     engine = build_engine()
@@ -821,9 +832,10 @@ async def backtest_historical_elo(
         with factory() as session:
             try:
                 return walk_forward_historical_elo(
-                    session, surface=surface,
+                    session, surface=surface, tour=tour,
                     min_training_matches=min_training_matches,
                     calibration_bins=calibration_bins,
+                    min_ev=min_ev,
                 )
             except ValueError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
@@ -895,6 +907,56 @@ async def live_probability(request: LiveProbabilityRequest):
         return calculate_live_probabilities(**request.model_dump())
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/players/search")
+async def search_players_for_forecast(
+    q: str = Query(min_length=2, max_length=100),
+    tour: str | None = Query(default=None, pattern="^(?i:ATP|WTA)$"),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    """Search player names in the local historical archive for forecast selection."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            try:
+                return search_historical_players(
+                    session, query=q, limit=limit, tour=tour,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        engine.dispose()
+
+
+@app.post("/predict/historical")
+async def predict_historical_matchup(request: PreMatchForecastRequest):
+    """Generate a pre-match forecast from stored history without manual Elo inputs."""
+    before = request.before or datetime.now(timezone.utc)
+    if before.tzinfo is None or before.utcoffset() is None:
+        raise HTTPException(status_code=422, detail="before must include a timezone.")
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            try:
+                return generate_pre_match_forecast(
+                    session,
+                    player_1_id=request.player_1_id,
+                    player_2_id=request.player_2_id,
+                    surface=request.surface,
+                    before=before.astimezone(timezone.utc).isoformat(),
+                    player_1_odds=request.player_1_odds,
+                    player_2_odds=request.player_2_odds,
+                    min_ev=request.min_ev,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        engine.dispose()
 
 
 @app.post("/predict")

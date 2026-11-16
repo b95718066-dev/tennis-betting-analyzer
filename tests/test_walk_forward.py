@@ -52,6 +52,9 @@ def test_walk_forward_same_timestamp_predictions_are_frozen_before_updates():
         assert scored["same-a"]["player_1_pre_match_elo"] == scored["same-b"]["player_2_pre_match_elo"]
         assert scored["same-a"]["player_1_win_probability"] == pytest.approx(1.0 - scored["same-b"]["player_1_win_probability"], abs=1e-6)
         assert scored["later"]["player_1_pre_match_elo"] > scored["same-a"]["player_1_pre_match_elo"]
+        calibration = result["chronological_probability_calibration"]
+        assert calibration["training_matches"] == 3
+        assert calibration["evaluation_matches"] == 1
     engine.dispose()
 
 
@@ -70,7 +73,8 @@ def test_walk_forward_never_scores_date_only_rows_and_reports_no_roi_without_odd
         assert result["coverage"]["out_of_sample_matches"] == 1
         assert result["metrics"]["matches"] == 1
         assert "odds_roi" in result["methodology"]
-        assert "not calculated" in result["methodology"]["odds_roi"]
+        assert result["odds_backtest"]["matches_with_paired_closing_odds"] == 0
+        assert result["odds_backtest"]["bets_placed"] == 0
     engine.dispose()
 
 
@@ -104,3 +108,124 @@ def test_platt_calibration_is_bounded_for_extreme_probabilities():
     from app.analytics.walk_forward import _apply_platt
     assert 0.0 < _apply_platt(0.000001, {"slope": 1.0, "intercept": 0.0}) < 1.0
     assert 0.0 < _apply_platt(0.999999, {"slope": 1.0, "intercept": 0.0}) < 1.0
+
+
+
+def test_walk_forward_includes_valuebetennis_utc_timestamps_and_closing_odds_roi():
+    from app.storage.models import HistoricalMatchSnapshot
+
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    with Session(engine) as session, session.begin():
+        # Date-only Cito results remain unscored; Valuebetennis publishes UTC
+        # match date-times without a trailing timezone marker.
+        session.add(HistoricalMatchSnapshot(
+            provider="cito", external_id="cito-date-only",
+            match_date="2025-01-01", tour="ATP", surface="hard",
+            player_1_id="atp_x", player_2_id="atp_y", winner_id="atp_x",
+            stats_available=False, raw={},
+        ))
+        for day in range(1, 6):
+            session.add(HistoricalMatchSnapshot(
+                provider="valuebetennis", external_id=f"vb-clay-{day}",
+                match_date=f"2025-01-{day:02d} 12:00:00",
+                tour="ATP", surface="terre battue",
+                player_1_id="vb_a", player_2_id="vb_b", winner_id="vb_a",
+                stats_available=False, raw={},
+            ))
+        session.add(HistoricalMatchSnapshot(
+            provider="valuebetennis", external_id="vb-hard-target",
+            match_date="2025-01-06 12:00:00",
+            tour="ATP", surface="dur",
+            player_1_id="vb_a", player_2_id="vb_b", winner_id="vb_a",
+            stats_available=False,
+            raw={"cote1_cloture": "4.0", "cote2_cloture": "1.2"},
+        ))
+
+        result = walk_forward_historical_elo(
+            session, min_training_matches=5, surface="hard", min_ev=0.03
+        )
+
+        assert result["coverage"]["rows_by_source"] == {
+            "cito": 1, "valuebetennis": 6
+        }
+        assert result["coverage"]["skipped_date_only"] == 1
+        assert result["coverage"]["skipped_surface_filter"] == 5
+        assert result["coverage"]["out_of_sample_matches"] == 1
+        prediction = result["sample_predictions"][0]
+        assert prediction["match_id"] == "vb-hard-target"
+        assert prediction["provider"] == "valuebetennis"
+        assert prediction["match_date"] == "2025-01-06T12:00:00+00:00"
+        assert prediction["prior_matches_player_1"] == 5
+        assert prediction["closing_odds"]["player_1"] == 4.0
+        assert prediction["closing_odds"]["market_probability_without_margin"]["player_1"] == pytest.approx(0.230769)
+        assert prediction["simulated_bet"]["selection"] == "player_1"
+        assert result["odds_backtest"]["matches_with_paired_closing_odds"] == 1
+        assert result["odds_backtest"]["bets_placed"] == 1
+        assert result["odds_backtest"]["net_profit_units"] == pytest.approx(3.0)
+        assert result["odds_backtest"]["roi_pct"] == pytest.approx(300.0)
+    engine.dispose()
+
+
+
+def test_odds_drawdown_treats_same_timestamp_bets_as_one_group():
+    from datetime import datetime, timezone
+    from app.analytics.walk_forward import _odds_backtest_summary
+
+    timestamp = datetime(2025, 1, 1, 12, tzinfo=timezone.utc)
+    result = _odds_backtest_summary(
+        [(timestamp, -1.0, False), (timestamp, 2.0, True)],
+        paired_odds=2, overround_sum=0.1, min_ev=0.03,
+    )
+    assert result["net_profit_units"] == pytest.approx(1.0)
+    assert result["max_drawdown_units"] == pytest.approx(0.0)
+
+
+def test_walk_forward_can_filter_atp_and_wta_independently():
+    from app.storage.models import HistoricalMatchSnapshot
+
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    with Session(engine) as session, session.begin():
+        for tour, prefix in (("ATP", "vb_atp"), ("WTA", "vb_wta")):
+            for day in range(1, 5):
+                session.add(HistoricalMatchSnapshot(
+                    provider="valuebetennis",
+                    external_id=f"{prefix}-{day}",
+                    match_date=f"2025-04-{day:02d} 12:00:00",
+                    tour=tour,
+                    surface="hard",
+                    player_1_id=f"{prefix}_a",
+                    player_2_id=f"{prefix}_b",
+                    winner_id=f"{prefix}_a",
+                    stats_available=False,
+                    raw={},
+                ))
+        atp = walk_forward_historical_elo(session, tour="ATP", min_training_matches=1)
+        wta = walk_forward_historical_elo(session, tour="WTA", min_training_matches=1)
+        assert atp["tour_filter"] == "ATP"
+        assert wta["tour_filter"] == "WTA"
+        assert atp["coverage"]["stored_rows_considered"] == 4
+        assert wta["coverage"]["stored_rows_considered"] == 4
+        assert atp["metrics"]["matches"] == 3
+        assert wta["metrics"]["matches"] == 3
+        assert all(row["player_1_id"].startswith("vb_atp") for row in atp["sample_predictions"])
+        assert all(row["player_1_id"].startswith("vb_wta") for row in wta["sample_predictions"])
+    engine.dispose()
+
+
+def test_walk_forward_rejects_unsupported_tour_filter():
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="tour must be ATP or WTA"):
+            walk_forward_historical_elo(session, tour="ITF")
+    engine.dispose()
+
+
+def test_walk_forward_api_rejects_unsupported_tour_filter():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    response = TestClient(app).get("/backtest/historical-elo?tour=ITF")
+    assert response.status_code == 422

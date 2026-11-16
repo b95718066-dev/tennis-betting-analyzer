@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analytics.elo import DEFAULT_K_FACTOR, DEFAULT_RATING, expected_probability, update_elo
+from app.data.normalization import normalize_surface
 from app.storage.models import HistoricalMatchSnapshot
 
 SURFACE_WEIGHT = 0.35
@@ -25,7 +26,9 @@ def _parse_cutoff(before: str) -> datetime:
     return cutoff.astimezone(timezone.utc)
 
 
-def _eligible_date(value: str | None, cutoff: datetime) -> bool:
+def _eligible_date(
+    value: str | None, cutoff: datetime, provider: str,
+) -> bool:
     if not value:
         return False
     try:
@@ -33,6 +36,9 @@ def _eligible_date(value: str | None, cutoff: datetime) -> bool:
     except ValueError:
         return False
     if match_time.tzinfo is None or match_time.utcoffset() is None:
+        if provider == "valuebetennis" and len(value.strip()) > 10:
+            match_time = match_time.replace(tzinfo=timezone.utc)
+            return match_time < cutoff
         return match_time.date() < cutoff.date()
     return match_time.astimezone(timezone.utc) < cutoff
 
@@ -47,15 +53,24 @@ def historical_elo_ratings(
     if surface.lower() not in VALID_SURFACES:
         raise ValueError("surface must be hard, clay, grass or carpet.")
     cutoff = _parse_cutoff(before)
-    rows = session.scalars(
-        select(HistoricalMatchSnapshot).where(
-            HistoricalMatchSnapshot.provider == "cito",
-            HistoricalMatchSnapshot.match_date.is_not(None),
-            HistoricalMatchSnapshot.winner_id.is_not(None),
-            HistoricalMatchSnapshot.player_1_id.is_not(None),
-            HistoricalMatchSnapshot.player_2_id.is_not(None),
-        ).order_by(HistoricalMatchSnapshot.match_date.asc(), HistoricalMatchSnapshot.id.asc())
-    ).all()
+    statement = select(
+        HistoricalMatchSnapshot.provider,
+        HistoricalMatchSnapshot.match_date,
+        HistoricalMatchSnapshot.surface,
+        HistoricalMatchSnapshot.player_1_id,
+        HistoricalMatchSnapshot.player_2_id,
+        HistoricalMatchSnapshot.winner_id,
+    ).where(
+        HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
+        HistoricalMatchSnapshot.match_date.is_not(None),
+        HistoricalMatchSnapshot.winner_id.is_not(None),
+        HistoricalMatchSnapshot.player_1_id.is_not(None),
+        HistoricalMatchSnapshot.player_2_id.is_not(None),
+    ).order_by(HistoricalMatchSnapshot.match_date.asc(), HistoricalMatchSnapshot.id.asc())
+
+    # Stream only the columns needed for Elo; loading hundreds of thousands of
+    # JSON-heavy ORM objects can exhaust serverless function memory.
+    rows = session.execute(statement.execution_options(yield_per=5000))
 
     overall: dict[str, float] = {}
     surface_ratings: dict[str, dict[str, float]] = {}
@@ -63,9 +78,9 @@ def historical_elo_ratings(
     surface_matches: dict[str, dict[str, int]] = {}
     used_matches = 0
     for row in rows:
-        if not _eligible_date(row.match_date, cutoff):
+        provider, match_date, match_surface, p1, p2, winner = row
+        if not _eligible_date(match_date, cutoff, provider):
             continue
-        p1, p2, winner = row.player_1_id, row.player_2_id, row.winner_id
         if winner not in {p1, p2} or p1 == p2:
             continue
         r1 = overall.get(p1, DEFAULT_RATING)
@@ -74,7 +89,7 @@ def historical_elo_ratings(
         overall[p1], overall[p2] = n1, n2
         overall_matches[p1] = overall_matches.get(p1, 0) + 1
         overall_matches[p2] = overall_matches.get(p2, 0) + 1
-        normalized_surface = (row.surface or "").lower()
+        normalized_surface = normalize_surface(match_surface) or "unknown"
         if normalized_surface in VALID_SURFACES:
             ratings = surface_ratings.setdefault(normalized_surface, {})
             counts = surface_matches.setdefault(normalized_surface, {})
@@ -107,7 +122,7 @@ def historical_elo_ratings(
     o = player_result(opponent_id)
     probability = expected_probability(p["effective_elo"], o["effective_elo"])
     return {
-        "provider": "cito_historical_match_snapshots",
+        "provider": "combined_cito_valuebetennis_historical_match_snapshots",
         "cutoff_exclusive": cutoff.isoformat(),
         "surface": surface.lower(),
         "player": p,
@@ -124,7 +139,7 @@ def historical_elo_ratings(
         },
         "limitations": [
             "This is a transparent baseline Elo replay, not a trained or calibrated betting model.",
-            "Only stored Cito match outcomes with resolved player IDs and winner IDs are used.",
+            "Stored Cito and Valuebetennis match outcomes with resolved, source-namespaced player IDs and winner IDs are used.",
             "Date-only matches on the cutoff calendar day are excluded.",
             "No inactivity decay, tournament-level K factor, retirement adjustment or doubles modeling is applied.",
         ],

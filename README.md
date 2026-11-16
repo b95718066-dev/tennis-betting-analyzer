@@ -186,14 +186,12 @@ Example request body:
 - This is the storage and feature foundation for walk-forward evaluation, not yet an automatically trained/retrained historical prediction model. The existing `/backtest` still evaluates supplied pre-generated predictions.
 
 
-## Sprint 13: historical serve and return aggregation
+## Sprint 13: historical player features (serve/return aggregation pending)
 
-- `GET /players/{player_id}/historical-stats?before=2026-06-01T12:00:00Z&surface=clay&limit=200` aggregates the player's stored Cito match-stat count pairs strictly before the exclusive cutoff.
-- Service-point and return-point rates are computed as summed numerators divided by summed denominators; match-level percentages and display strings are ignored.
-- Player-side mapping uses the stored Cito player IDs. Surface filtering is optional; all-court aggregation is used when omitted.
-- Each available service/return win metric includes a 95% Wilson interval and sample-size diagnostic. Missing or invalid count pairs and zero denominators remain unavailable.
+- `GET /players/{player_id}/historical-stats?before=2026-06-01T12:00:00Z&surface=clay&limit=200` currently returns Cito match-result features: matches considered, wins, losses and win rate, using only records before the exclusive cutoff.
+- The route does **not** currently aggregate historical serve-point or return-point count pairs. It does not infer those rates from match wins or percentages. The endpoint description and response limitations reflect this distinction.
 - Date-only rows from the cutoff calendar day are excluded. Timestamped rows must be strictly earlier than the cutoff.
-- This endpoint is descriptive historical evidence only. It does not silently blend historical rates into the live model; any shrinkage or weighting requires separate chronological validation.
+- Next step: implement player-side mapping and numerator/denominator aggregation from verified Cito historical stat payloads, then add sample-size confidence intervals and chronological validation before any live-model integration.
 
 
 ## Sprint 14: historical Elo replay
@@ -207,13 +205,14 @@ Example request body:
 
 ## Sprint 15: walk-forward historical Elo validation
 
-- `GET /backtest/historical-elo?min_training_matches=10&surface=clay` evaluates the stored Cito archive with an expanding chronological window. It does not call the provider or change the existing prediction endpoint.
-- For each timestamped match, both players' pre-match ratings are used to generate the probability first; the match result is applied only afterward. Matches with identical timestamps are all predicted from the same frozen rating state before any result in that timestamp group is applied.
-- The default warm-up requires at least 10 prior recorded matches for each player. Change `min_training_matches` to adjust this threshold. Surface Elo uses the existing 35% blend only after five prior matches on that surface.
-- Reports out-of-sample match count, warm-up/date-only exclusions, accuracy, Brier score, log loss and calibration buckets. A sample of up to 100 individual predictions includes pre-match ratings and prior-match counts.
-- Date-only archive rows are never scored because their exact start time is unknown; they can update ratings only at the end of their calendar day for subsequent dates. Invalid rows are skipped.
-- ROI/Yield are intentionally not reported: this evaluation does not yet have a verified, timestamped pre-match odds join. It is a model-probability validation, not a profitability claim.
-- The evaluation is limited by whatever historical matches are already stored locally. It is a transparent Elo baseline, not a trained model or evidence of a betting edge.
+- `GET /backtest/historical-elo?min_training_matches=10&surface=clay&tour=ATP&min_ev=0.03` evaluates stored Cito and Valuebetennis match outcomes with an expanding chronological window. Use `tour=ATP` or `tour=WTA` to isolate each tour; omit it to evaluate both. It does not call either provider or change the existing live prediction endpoint.
+- Valuebetennis documents its CSV `date` column as match date/time in UTC. Its timestamps omit a timezone suffix in the CSV, so the backtest explicitly interprets those source-specific date-times as UTC. Cito rows containing only a calendar date are never scored; they update ratings at the end of that UTC day for later matches.
+- For each timestamp group, all predictions use the same frozen pre-match ratings; only after the group is scored are its outcomes applied. The default warm-up requires at least 10 prior matches for both players.
+- A surface filter controls which matches are scored, not which results train overall Elo. All earlier surfaces update overall and surface-specific ratings; surface Elo is blended at 35% only after five prior matches on that surface.
+- Reports source coverage, out-of-sample count, warm-up/date-only/surface exclusions, accuracy, Brier score, log loss, calibration buckets and a chronological Platt holdout. Calibration splits use whole timestamp groups so simultaneous matches cannot cross the fit/evaluation boundary. The response retains at most 100 sample predictions to keep memory bounded; each includes pre-match ratings and source IDs.
+- When paired Valuebetennis closing odds are present, `odds_backtest` simulates one-unit stakes when model EV meets `min_ev`. It reports paired-odds coverage, no-vig market probabilities, model probability edges, bets, wins, net units, ROI, Yield, mean market overround and maximum drawdown. Simultaneous bets are grouped for drawdown so their arbitrary row order cannot distort the result.
+- Valuebetennis describes closing prices as the last odds recorded before the match. This makes them pre-match reference prices, but not a timestamped record of the exact price available at an earlier betting decision. The ROI is a historical simulation, not evidence of executable profit; fees, slippage, bookmaker limits and execution failures are not modeled.
+- The evaluation remains a transparent Elo baseline, not a trained ensemble or proof of a betting edge.
 
 
 ## Sprint 17: integrated live match analysis
@@ -249,3 +248,40 @@ When enabled, a successful `POST /matches/{match_id}/analyze-live/auto` automati
 - Matches with an explicit terminal status returned by Cito are deactivated automatically. Provider 404/410 responses also retire stale IDs; transient failures such as rate limits and timeouts remain active for retry.
 
 The watchlist is stored in the configured SQL database. This first version provides an explicit polling endpoint; it does not create a background scheduler. The feature flag is a rollback switch: set it to `false` or remove it to restore the prior application behavior. No production environment variable or deployment is changed by this PR.
+
+
+## Sprint 10: data-backed pre-match forecasts
+
+- To expand the local player catalogue and improve sample depth, call `POST /history/sync?tour=ATP&year=2026&page=1&page_size=100` and the equivalent WTA request. Continue with the next page while the response reports `has_next=true`; respect the connected Cito plan's request quota. The dashboard can search only players already imported into this database.
+
+- `GET /players/search?q=...&tour=ATP|WTA` searches player names already present in the local archive; the dashboard uses this to select stable player IDs.
+- `POST /predict/historical` generates a pre-match forecast directly from stored Cito historical match snapshots; callers provide stable player IDs and court surface rather than manually entering Elo ratings and recent-form arrays.
+- The service replays as-of Elo, derives each player's completed-match form and surface history, and extracts head-to-head meetings from the same stored archive.
+- An optional timezone-aware `before` timestamp creates a historical as-of forecast. Future matches and date-only rows on the cutoff calendar day are excluded.
+- Optional paired decimal odds produce margin-removed market probabilities, expected value and a configurable EV threshold.
+- The current pre-match model uses Elo as its anchor and applies small Beta-prior-shrunk adjustments for recent form, surface performance and H2H. Each response includes signal sample sizes and history coverage.
+- **Model status:** experimental and uncalibrated. Data-coverage labels describe how much history was available, not statistical certainty. Do not treat value flags as betting recommendations until chronological holdout calibration and timestamped odds backtests demonstrate an edge.
+
+Example request:
+
+```json
+{
+  "player_1_id": "CITO_PLAYER_ID_1",
+  "player_2_id": "CITO_PLAYER_ID_2",
+  "surface": "hard",
+  "player_1_odds": 1.85,
+  "player_2_odds": 2.05,
+  "min_ev": 0.03
+}
+```
+
+
+## Historical archive data source and attribution
+
+The isolated Preview archive can include historical ATP/WTA match results and pre-match odds from [Valuebetennis](https://www.valuebetennis.com/). The downloadable season CSV files are published under the **Creative Commons Attribution 4.0 International (CC BY 4.0)** license. Retain attribution to Valuebetennis and the license when redistributing derived datasets or exports.
+
+Imported rows preserve the original CSV fields in `raw`, including opening and closing winner odds where supplied. Valuebetennis player IDs are prefixed with `vb_` to keep them distinct from Cito IDs. The source data dictionary defines `date` as the match date/time in UTC and closing odds as the last prices recorded before the match ([data dictionary](https://www.valuebetennis.com/en/donnees.htm)). The CSV serializes UTC datetimes without a timezone suffix; the backtest applies UTC only to Valuebetennis date-times, while Cito date-only rows remain unscored.
+
+Valuebetennis court labels are French: `dur` / `dur intérieur` = hard, `terre battue` = clay, `gazon` = grass and `moquette intérieur` = carpet. Runtime normalization handles already-imported rows without mutating the Preview database; new imports store canonical surface names while preserving the original source label in `raw`. The source contains match outcomes and odds, not point-by-point or serve statistics; those fields must not be inferred from this dataset.
+
+Historical forecasts combine Cito and Valuebetennis rows only when the source-specific player IDs match the requested player IDs. Backtests must use odds captured before match start, exclude any post-start price, and be evaluated chronologically with a held-out period. The presence of historical closing odds alone does not prove that a price was available at the decision timestamp.
