@@ -77,6 +77,8 @@ class TennisApiProvider(HttpJsonProvider):
                 }
         return {
             "provider": self.PROVIDER_NAME, "stats": adapted,
+            "player1_name": (payload.get("player1") or {}).get("name") if isinstance(payload.get("player1"), dict) else None,
+            "player2_name": (payload.get("player2") or {}).get("name") if isinstance(payload.get("player2"), dict) else None,
             "stats_available": len(adapted) == 2,
             "stats_unavailable_code": None if len(adapted) == 2 else "service_points_not_available",
             "raw_statistics": payload,
