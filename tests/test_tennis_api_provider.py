@@ -111,3 +111,50 @@ async def test_live_stats_uses_documented_service_points_won_and_played_counts()
     assert payload["stats"]["player2"] == {
         "service_points_won": 21, "service_points_played": 35,
     }
+
+
+def test_tennis_api_serve_counts_feed_existing_live_probability_contract():
+    from app.analytics.serve_stats import normalize_live_serve_rates
+
+    result = normalize_live_serve_rates({
+        "provider": "tennis_api",
+        "stats_available": True,
+        "stats": {
+            "player1": {"service_points_won": 28, "service_points_played": 40},
+            "player2": {"service_points_won": 21, "service_points_played": 35},
+        },
+    })
+    assert result["ready_for_live_model"] is True
+    assert result["provider"] == "tennis_api"
+    assert result["serve_point_win_rates"][0]["serve_point_win_rate"] == 0.7
+    assert result["serve_point_win_rates"][1]["serve_point_win_rate"] == 0.6
+
+
+def test_tennis_api_event_odds_are_persisted_without_cross_provider_linking():
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from app.data.providers.tennis_api import TennisApiProvider
+    from app.services.odds_sync import persist_odds_snapshots
+    from app.storage.database import create_schema
+    from app.storage.models import OddsObservation, ProviderMatchLink
+
+    captured = datetime.now(timezone.utc)
+    from app.data.models import OddsSnapshot
+    snapshots = [
+        OddsSnapshot(provider="tennis_api", external_match_id="123456",
+                     bookmaker="Bookmaker A", market="h2h", selection="Player One",
+                     odds_decimal=1.85, captured_at=captured, is_live=True),
+        OddsSnapshot(provider="tennis_api", external_match_id="123456",
+                     bookmaker="Bookmaker A", market="h2h", selection="Player Two",
+                     odds_decimal=2.05, captured_at=captured, is_live=True),
+    ]
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    with Session(engine) as session, session.begin():
+        first = persist_odds_snapshots(session, snapshots, provider="tennis_api")
+        second = persist_odds_snapshots(session, snapshots, provider="tennis_api")
+        assert first["snapshots_inserted"] == 2
+        assert second["snapshots_deduplicated"] == 2
+        assert len(session.scalars(select(OddsObservation)).all()) == 2
+        assert session.scalars(select(ProviderMatchLink)).all() == []
