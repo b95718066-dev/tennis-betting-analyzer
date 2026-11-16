@@ -1,4 +1,7 @@
-from datetime import datetime, timezone\n\nimport pytest\nfrom sqlalchemy import create_engine, select
+from datetime import datetime, timezone
+
+import pytest
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.services.smart_watchlist import list_watched_matches, unwatch_match, watch_match
