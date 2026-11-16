@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics.elo import DEFAULT_K_FACTOR, DEFAULT_RATING, expected_probability, update_elo
 from app.analytics.historical_elo import MIN_SURFACE_MATCHES, SURFACE_WEIGHT, VALID_SURFACES
+from app.data.normalization import normalize_surface
 from app.storage.models import HistoricalMatchSnapshot
 
 
@@ -208,9 +209,7 @@ def walk_forward_historical_elo(
         ):
             invalid += 1
             continue
-        row_surface = (row.surface or "").strip().lower()
-        if row_surface not in VALID_SURFACES:
-            row_surface = "unknown"
+        row_surface = normalize_surface(row.surface) or "unknown"
         raw = row.raw if isinstance(row.raw, dict) else {}
         closing_1 = (
             _parse_decimal_odds(raw.get("closing_odds_player_1") or raw.get("cote1_cloture"))
