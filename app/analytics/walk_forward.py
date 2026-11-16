@@ -123,7 +123,7 @@ def _score_probabilities(rows: list[tuple[float, bool]]) -> dict[str, float] | N
 
 
 def _odds_backtest_summary(
-    bets: list[tuple[float, bool]],
+    bets: list[tuple[datetime, float, bool]],
     paired_odds: int,
     overround_sum: float,
     min_ev: float,
@@ -131,11 +131,21 @@ def _odds_backtest_summary(
     stake = float(len(bets))
     net_profit = sum(profit for profit, _ in bets)
     cumulative = peak = max_drawdown = 0.0
-    for profit, _ in bets:
-        cumulative += profit
+    current_timestamp = None
+    current_group_profit = 0.0
+    for timestamp, profit, _ in bets:
+        if current_timestamp is not None and timestamp != current_timestamp:
+            cumulative += current_group_profit
+            peak = max(peak, cumulative)
+            max_drawdown = max(max_drawdown, peak - cumulative)
+            current_group_profit = 0.0
+        current_timestamp = timestamp
+        current_group_profit += profit
+    if current_timestamp is not None:
+        cumulative += current_group_profit
         peak = max(peak, cumulative)
         max_drawdown = max(max_drawdown, peak - cumulative)
-    wins = sum(won for _, won in bets)
+    wins = sum(won for _, _, won in bets)
     return {
         "odds_source": "Valuebetennis Pinnacle closing odds; last recorded before match",
         "matches_with_paired_closing_odds": paired_odds,
@@ -231,7 +241,8 @@ def walk_forward_historical_elo(
     surface_ratings: dict[str, dict[str, float]] = defaultdict(dict)
     surface_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     predictions: list[tuple[float, bool]] = []
-    odds_bets: list[tuple[float, bool]] = []
+    odds_bets: list[tuple[datetime, float, bool]] = []
+    prediction_groups: list[list[tuple[float, bool]]] = []
     paired_closing_odds = 0
     closing_overround_sum = 0.0
     scored = 0
@@ -250,6 +261,7 @@ def walk_forward_historical_elo(
             index += 1
 
         pending_updates = []
+        timestamp_predictions: list[tuple[float, bool]] = []
         for (
             match_time, is_date_only, _, provider, external_id, p1, p2, winner,
             row_surface, closing_1, closing_2,
@@ -272,6 +284,7 @@ def walk_forward_historical_elo(
                     probability = expected_probability(r1, r2)
                     outcome = winner == p1
                     predictions.append((probability, outcome))
+                    timestamp_predictions.append((probability, outcome))
                     scored += 1
                     prediction_item = {
                         "match_id": external_id,
@@ -305,7 +318,7 @@ def walk_forward_historical_elo(
                             selected_odds = closing_1 if selected_side == 1 else closing_2
                             won = outcome if selected_side == 1 else not outcome
                             profit = selected_odds - 1.0 if won else -1.0
-                            odds_bets.append((profit, won))
+                            odds_bets.append((match_time, profit, won))
                             prediction_item["simulated_bet"] = {
                                 "selection": "player_1" if selected_side == 1 else "player_2",
                                 "expected_value": round(best_ev, 6),
@@ -314,6 +327,9 @@ def walk_forward_historical_elo(
                             }
                     prediction_rows.append(prediction_item)
             pending_updates.append((p1, p2, winner, row_surface))
+
+        if timestamp_predictions:
+            prediction_groups.append(timestamp_predictions)
 
         for p1, p2, winner, row_surface in pending_updates:
             r1, r2 = overall.get(p1, DEFAULT_RATING), overall.get(p2, DEFAULT_RATING)
@@ -330,14 +346,34 @@ def walk_forward_historical_elo(
                 counts[p1] += 1
                 counts[p2] += 1
 
-    # Fit on the earlier 60% of out-of-sample predictions; score only the later 40%.
-    split = int(len(predictions) * 0.60)
-    train_predictions, test_predictions = predictions[:split], predictions[split:]
+    # Split calibration by whole timestamp groups so one simultaneous match
+    # cannot train the calibrator used to score another match at that same time.
+    target_train = int(len(predictions) * 0.60)
+    cumulative_counts = [0]
+    for group_predictions in prediction_groups:
+        cumulative_counts.append(cumulative_counts[-1] + len(group_predictions))
+    split_group = min(
+        range(len(prediction_groups) + 1),
+        key=lambda index: (
+            abs(cumulative_counts[index] - target_train),
+            -cumulative_counts[index],
+        ),
+    )
+    train_predictions = [
+        item for group_predictions in prediction_groups[:split_group]
+        for item in group_predictions
+    ]
+    test_predictions = [
+        item for group_predictions in prediction_groups[split_group:]
+        for item in group_predictions
+    ]
     platt = _fit_platt(train_predictions)
     calibrated = [(_apply_platt(p, platt), y) for p, y in test_predictions] if platt else []
     calibration_evaluation = {
         "method": "Platt logistic calibration",
-        "chronological_split": "first 60% fit; final 40% untouched evaluation",
+        "chronological_split": (
+            "approximately first 60% fit; final holdout split only at whole timestamp-group boundaries"
+        ),
         "training_matches": len(train_predictions),
         "evaluation_matches": len(test_predictions),
         "parameters": (
