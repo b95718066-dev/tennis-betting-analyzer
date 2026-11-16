@@ -258,6 +258,44 @@ async def available_tennis_odds_sports(all_sports: bool = Query(default=False)):
         raise HTTPException(status_code=502, detail="Odds provider returned an invalid sports catalogue.") from error
 
 
+@app.get("/odds/coverage")
+async def odds_coverage():
+    """Summarize persisted bookmaker coverage without exposing provider credentials."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            rows = session.scalars(
+                select(OddsObservation).where(OddsObservation.provider == "the_odds_api")
+            ).all()
+            links = session.scalars(
+                select(ProviderMatchLink).where(
+                    ProviderMatchLink.source_provider == "the_odds_api",
+                    ProviderMatchLink.canonical_provider == "cito",
+                )
+            ).all()
+            latest = max((row.captured_at for row in rows), default=None)
+            age_seconds = None
+            if latest is not None:
+                if latest.tzinfo is None or latest.utcoffset() is None:
+                    latest = latest.replace(tzinfo=timezone.utc)
+                age_seconds = round((datetime.now(timezone.utc) - latest.astimezone(timezone.utc)).total_seconds(), 1)
+            return {
+                "provider": "the_odds_api",
+                "snapshots": len(rows),
+                "linked_events": len(links),
+                "bookmakers": sorted({row.bookmaker for row in rows}),
+                "markets": sorted({row.market for row in rows}),
+                "latest_snapshot_at": latest.isoformat() if latest else None,
+                "latest_snapshot_age_seconds": age_seconds,
+                "fresh_within_15m": age_seconds is not None and -60 <= age_seconds <= 900,
+                "note": "A linked event is not necessarily a complete two-sided market; live analysis checks that separately.",
+            }
+    finally:
+        engine.dispose()
+
+
 @app.get("/odds/events")
 async def preview_tennis_odds(
     sport_key: str = Query(min_length=8, max_length=100),
