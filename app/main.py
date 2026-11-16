@@ -154,20 +154,20 @@ async def health_check():
 @app.get("/providers")
 async def provider_capabilities():
     settings = ProviderSettings.from_env()
-    odds_configured = settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key)
+    odds_configured = (settings.odds_provider == "the_odds_api" and bool(settings.odds_api_key)) or (settings.odds_provider == "tennis_api" and bool(settings.tennis_api_key))
     return {
         "live_provider": settings.live_provider,
         "odds_provider": settings.odds_provider,
         "odds_provider_configured": odds_configured,
-        "configured": bool(settings.api_key) if settings.live_provider == "cito" else False,
+        "configured": bool(settings.tennis_api_key) if settings.live_provider == "tennis_api" else bool(settings.api_key) if settings.live_provider == "cito" else False,
         "capabilities": {
-            "live_scores": settings.live_provider == "cito",
-            "point_by_point": settings.live_provider == "cito",
-            "historical_matches": settings.live_provider == "cito",
+            "live_scores": settings.live_provider in {"cito", "tennis_api"},
+            "point_by_point": settings.live_provider in {"cito", "tennis_api"},
+            "historical_matches": settings.live_provider in {"cito", "tennis_api"},
             "pre_match_odds": odds_configured,
             "live_odds": odds_configured,
             "odds_markets": ["h2h", "spreads", "totals"] if odds_configured else [],
-            "odds_coverage_note": "Selected tennis tournaments only; actual markets vary by bookmaker and event.",
+            "odds_coverage_note": "Tennis API uses one live event ID for score and odds; bookmaker and market availability varies by event.",
         },
     }
     return {
@@ -606,13 +606,13 @@ async def analyze_live_match_value_auto(
                 raise HTTPException(status_code=422, detail=str(error)) from error
         result["serve_statistics"] = stats
         result["extended_live_statistics"] = normalize_live_match_stats(payload)
-        result["serve_point_win_rates_source"] = "cito_live_match_stats"
+        result["serve_point_win_rates_source"] = f"{provider.name}_live_match_stats"
 
         # Keep historical Elo separate from the in-play Markov price until an
         # ensemble has passed leakage-safe walk-forward calibration.
         with factory() as history_session:
             stored = history_session.scalar(select(TennisMatch).where(
-                TennisMatch.provider == "cito", TennisMatch.external_id == match_id,
+                TennisMatch.provider == provider.name, TennisMatch.external_id == match_id,
             ))
             if (
                 stored is not None and stored.player_1_id and stored.player_2_id
@@ -635,7 +635,7 @@ async def analyze_live_match_value_auto(
             "combined_probability": None,
             "reason": "Signals remain separate until walk-forward calibration validates an ensemble.",
         }
-        if os.getenv("TENNIS_SMART_MATCH_WATCHLIST_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        if provider.name == "cito" and os.getenv("TENNIS_SMART_MATCH_WATCHLIST_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
             with factory.begin() as watch_session:
                 watch_match(watch_session, match_id, source="analyzed")
             result["watchlist"] = {"enabled": True, "watching": True, "match_id": match_id}
