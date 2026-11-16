@@ -47,15 +47,23 @@ def historical_elo_ratings(
     if surface.lower() not in VALID_SURFACES:
         raise ValueError("surface must be hard, clay, grass or carpet.")
     cutoff = _parse_cutoff(before)
-    rows = session.scalars(
-        select(HistoricalMatchSnapshot).where(
-            HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
-            HistoricalMatchSnapshot.match_date.is_not(None),
-            HistoricalMatchSnapshot.winner_id.is_not(None),
-            HistoricalMatchSnapshot.player_1_id.is_not(None),
-            HistoricalMatchSnapshot.player_2_id.is_not(None),
-        ).order_by(HistoricalMatchSnapshot.match_date.asc(), HistoricalMatchSnapshot.id.asc())
-    ).all()
+    statement = select(
+        HistoricalMatchSnapshot.match_date,
+        HistoricalMatchSnapshot.surface,
+        HistoricalMatchSnapshot.player_1_id,
+        HistoricalMatchSnapshot.player_2_id,
+        HistoricalMatchSnapshot.winner_id,
+    ).where(
+        HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
+        HistoricalMatchSnapshot.match_date.is_not(None),
+        HistoricalMatchSnapshot.winner_id.is_not(None),
+        HistoricalMatchSnapshot.player_1_id.is_not(None),
+        HistoricalMatchSnapshot.player_2_id.is_not(None),
+    ).order_by(HistoricalMatchSnapshot.match_date.asc(), HistoricalMatchSnapshot.id.asc())
+
+    # Stream only the columns needed for Elo; loading hundreds of thousands of
+    # JSON-heavy ORM objects can exhaust serverless function memory.
+    rows = session.execute(statement.execution_options(yield_per=5000))
 
     overall: dict[str, float] = {}
     surface_ratings: dict[str, dict[str, float]] = {}
@@ -63,9 +71,9 @@ def historical_elo_ratings(
     surface_matches: dict[str, dict[str, int]] = {}
     used_matches = 0
     for row in rows:
-        if not _eligible_date(row.match_date, cutoff):
+        match_date, match_surface, p1, p2, winner = row
+        if not _eligible_date(match_date, cutoff):
             continue
-        p1, p2, winner = row.player_1_id, row.player_2_id, row.winner_id
         if winner not in {p1, p2} or p1 == p2:
             continue
         r1 = overall.get(p1, DEFAULT_RATING)
@@ -74,7 +82,7 @@ def historical_elo_ratings(
         overall[p1], overall[p2] = n1, n2
         overall_matches[p1] = overall_matches.get(p1, 0) + 1
         overall_matches[p2] = overall_matches.get(p2, 0) + 1
-        normalized_surface = (row.surface or "").lower()
+        normalized_surface = (match_surface or "").lower()
         if normalized_surface in VALID_SURFACES:
             ratings = surface_ratings.setdefault(normalized_surface, {})
             counts = surface_matches.setdefault(normalized_surface, {})
