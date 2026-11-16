@@ -121,6 +121,43 @@ def _score_probabilities(rows: list[tuple[float, bool]]) -> dict[str, float] | N
     }
 
 
+def _odds_backtest_summary(
+    bets: list[tuple[float, bool]],
+    paired_odds: int,
+    overround_sum: float,
+    min_ev: float,
+) -> dict[str, Any]:
+    stake = float(len(bets))
+    net_profit = sum(profit for profit, _ in bets)
+    cumulative = peak = max_drawdown = 0.0
+    for profit, _ in bets:
+        cumulative += profit
+        peak = max(peak, cumulative)
+        max_drawdown = max(max_drawdown, peak - cumulative)
+    wins = sum(won for _, won in bets)
+    return {
+        "odds_source": "Valuebetennis Pinnacle closing odds; last recorded before match",
+        "matches_with_paired_closing_odds": paired_odds,
+        "bets_placed": len(bets),
+        "wins": wins,
+        "win_rate": round(wins / len(bets), 6) if bets else None,
+        "flat_stake_units": stake,
+        "net_profit_units": round(net_profit, 4),
+        "roi_pct": round(net_profit / stake * 100.0, 4) if stake else None,
+        "yield_pct": round(net_profit / stake * 100.0, 4) if stake else None,
+        "max_drawdown_units": round(max_drawdown, 4),
+        "mean_market_overround_pct": (
+            round(overround_sum / paired_odds * 100.0, 4) if paired_odds else None
+        ),
+        "minimum_model_ev": min_ev,
+        "limitations": [
+            "Flat one-unit stakes; no commission, slippage, limits or execution failures.",
+            "Closing prices are pre-match snapshots, not proof of a price available at an earlier decision time.",
+            "Only paired valid closing odds are evaluated; missing prices are not imputed.",
+        ],
+    }
+
+
 def walk_forward_historical_elo(
     session: Session, *, surface: str | None = None,
     min_training_matches: int = 10, calibration_bins: int = 10,
@@ -346,12 +383,17 @@ def walk_forward_historical_elo(
         "metrics": metrics,
         "calibration": calibration,
         "chronological_probability_calibration": calibration_evaluation,
+        "odds_backtest": _odds_backtest_summary(
+            odds_bets, paired_closing_odds, closing_overround_sum, min_ev
+        ),
         "coverage": {
-            "stored_rows_considered": len(rows),
+            "stored_rows_considered": sum(source_rows.values()),
+            "rows_by_source": dict(source_rows),
             "valid_rows": len(usable),
             "out_of_sample_matches": scored,
             "skipped_warmup": warmup_skipped,
             "skipped_date_only": date_only_skipped,
+            "skipped_surface_filter": surface_filtered,
             "skipped_invalid": invalid,
             "min_training_matches_per_player": min_training_matches,
         },
@@ -363,14 +405,19 @@ def walk_forward_historical_elo(
             "walk_forward": "expanding window; prediction before outcome update",
             "same_timestamp": "all matches at an identical timestamp are predicted before any result at that timestamp is applied",
             "date_only_policy": "date-only rows are never scored and update ratings only at end of their calendar day",
-            "odds_roi": "not calculated: no verified timestamped pre-match odds join is included",
+            "odds_roi": (
+                "simulated flat-stake results use Valuebetennis closing odds, documented as "
+                "the last prices recorded before match start; not a timestamped bet-execution log"
+            ),
             "probability_calibration": "Platt calibration is fitted on the earlier 60% of out-of-sample Elo predictions and scored on the later 40%; this is not an Elo+live-stat ensemble",
         },
         "sample_predictions": prediction_rows[:100],
         "limitations": [
             "This evaluates a transparent Elo baseline, not a trained or calibrated betting model.",
-            "Results depend on completeness and selection bias of the locally stored Cito archive.",
-            "No verified historical bookmaker baseline or odds ROI; no live-stat ensemble has been validated.",
+            "Results depend on completeness and selection bias of the locally stored Cito and Valuebetennis archives.",
+            "Closing-odds ROI is a historical simulation using the last recorded pre-match Valuebetennis price; actual execution, limits and slippage are not modeled.",
+            "Cito date-only rows are excluded from scoring; Valuebetennis naive date-times are interpreted as UTC per the source data dictionary.",
+            "No live-stat ensemble has been validated.",
             "Platt calibration may be unstable on small archives; evaluate only on the untouched later chronological holdout.",
             "No fees, retirement adjustment, inactivity decay or doubles-specific model.",
             "Date-only rows are excluded from scoring because their exact pre-match timestamp is unknown.",
