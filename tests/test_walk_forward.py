@@ -104,3 +104,59 @@ def test_platt_calibration_is_bounded_for_extreme_probabilities():
     from app.analytics.walk_forward import _apply_platt
     assert 0.0 < _apply_platt(0.000001, {"slope": 1.0, "intercept": 0.0}) < 1.0
     assert 0.0 < _apply_platt(0.999999, {"slope": 1.0, "intercept": 0.0}) < 1.0
+
+
+
+def test_walk_forward_includes_valuebetennis_utc_timestamps_and_closing_odds_roi():
+    from app.storage.models import HistoricalMatchSnapshot
+
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    with Session(engine) as session, session.begin():
+        # Date-only Cito results remain unscored; Valuebetennis publishes UTC
+        # match date-times without a trailing timezone marker.
+        session.add(HistoricalMatchSnapshot(
+            provider="cito", external_id="cito-date-only",
+            match_date="2025-01-01", tour="ATP", surface="hard",
+            player_1_id="atp_x", player_2_id="atp_y", winner_id="atp_x",
+            stats_available=False, raw={},
+        ))
+        for day in range(1, 6):
+            session.add(HistoricalMatchSnapshot(
+                provider="valuebetennis", external_id=f"vb-clay-{day}",
+                match_date=f"2025-01-{day:02d} 12:00:00",
+                tour="ATP", surface="clay",
+                player_1_id="vb_a", player_2_id="vb_b", winner_id="vb_a",
+                stats_available=False, raw={},
+            ))
+        session.add(HistoricalMatchSnapshot(
+            provider="valuebetennis", external_id="vb-hard-target",
+            match_date="2025-01-06 12:00:00",
+            tour="ATP", surface="hard",
+            player_1_id="vb_a", player_2_id="vb_b", winner_id="vb_a",
+            stats_available=False,
+            raw={"cote1_cloture": "4.0", "cote2_cloture": "1.2"},
+        ))
+
+        result = walk_forward_historical_elo(
+            session, min_training_matches=5, surface="hard", min_ev=0.03
+        )
+
+        assert result["coverage"]["rows_by_source"] == {
+            "cito": 1, "valuebetennis": 6
+        }
+        assert result["coverage"]["skipped_date_only"] == 1
+        assert result["coverage"]["skipped_surface_filter"] == 5
+        assert result["coverage"]["out_of_sample_matches"] == 1
+        prediction = result["sample_predictions"][0]
+        assert prediction["match_id"] == "vb-hard-target"
+        assert prediction["provider"] == "valuebetennis"
+        assert prediction["match_date"] == "2025-01-06T12:00:00+00:00"
+        assert prediction["prior_matches_player_1"] == 5
+        assert prediction["closing_odds"]["player_1"] == 4.0
+        assert prediction["simulated_bet"]["selection"] == "player_1"
+        assert result["odds_backtest"]["matches_with_paired_closing_odds"] == 1
+        assert result["odds_backtest"]["bets_placed"] == 1
+        assert result["odds_backtest"]["net_profit_units"] == pytest.approx(3.0)
+        assert result["odds_backtest"]["roi_pct"] == pytest.approx(300.0)
+    engine.dispose()
