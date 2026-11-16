@@ -253,6 +253,7 @@ The watchlist is stored in the configured SQL database. This first version provi
 
 ## Sprint 10: data-backed pre-match forecasts
 
+- `GET /players/search?q=...&tour=ATP|WTA` searches player names already present in the local archive; the dashboard uses this to select stable player IDs.
 - `POST /predict/historical` generates a pre-match forecast directly from stored Cito historical match snapshots; callers provide stable player IDs and court surface rather than manually entering Elo ratings and recent-form arrays.
 - The service replays as-of Elo, derives each player's completed-match form and surface history, and extracts head-to-head meetings from the same stored archive.
 - An optional timezone-aware `before` timestamp creates a historical as-of forecast. Future matches and date-only rows on the cutoff calendar day are excluded.
