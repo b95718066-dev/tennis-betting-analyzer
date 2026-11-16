@@ -825,6 +825,7 @@ async def backtest_historical_elo(
     surface: str | None = Query(default=None, pattern="^(hard|clay|grass|carpet)$"),
     min_training_matches: int = Query(default=10, ge=1, le=1000),
     calibration_bins: int = Query(default=10, ge=2, le=50),
+    min_ev: float = Query(default=0.03, ge=0, le=1),
 ):
     """Run expanding-window Elo evaluation using stored history only."""
     engine = build_engine()
@@ -837,6 +838,7 @@ async def backtest_historical_elo(
                     session, surface=surface,
                     min_training_matches=min_training_matches,
                     calibration_bins=calibration_bins,
+                    min_ev=min_ev,
                 )
             except ValueError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
