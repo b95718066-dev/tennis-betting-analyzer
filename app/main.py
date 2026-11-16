@@ -24,7 +24,7 @@ from .services.historical_sync import persist_historical_rows, player_history_fe
 from .storage.models import HistoricalMatchSnapshot
 from .services.odds_sync import persist_odds_events
 from .services.live_value import analyze_stored_live_match
-from .services.pre_match_forecast import generate_pre_match_forecast
+from .services.pre_match_forecast import generate_pre_match_forecast, search_historical_players
 from .storage.database import build_engine, create_schema
 from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, SmartMatchWatchlist, TennisMatch
 from .storage.repository import save_odds_snapshot
@@ -906,6 +906,28 @@ async def live_probability(request: LiveProbabilityRequest):
         return calculate_live_probabilities(**request.model_dump())
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/players/search")
+async def search_players_for_forecast(
+    q: str = Query(min_length=2, max_length=100),
+    tour: str | None = Query(default=None, pattern="^(?i:ATP|WTA)$"),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    """Search player names in the local historical archive for forecast selection."""
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            try:
+                return search_historical_players(
+                    session, query=q, limit=limit, tour=tour,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        engine.dispose()
 
 
 @app.post("/predict/historical")
