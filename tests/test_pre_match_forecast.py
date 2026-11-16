@@ -164,3 +164,37 @@ def test_pre_match_forecast_uses_valuebetennis_history_and_searches_flat_csv_nam
         assert players["players"][0]["matches_in_archive"] == 2
         assert players["players"][0]["provider"] == "valuebetennis"
     engine.dispose()
+
+
+
+def test_pre_match_forecast_uses_valuebetennis_utc_time_within_cutoff_day():
+    from app.storage.models import HistoricalMatchSnapshot
+
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    with Session(engine) as session, session.begin():
+        session.add_all([
+            HistoricalMatchSnapshot(
+                provider="valuebetennis", external_id="vb-early",
+                match_date="2025-01-05 10:00:00", tour="ATP", surface="dur",
+                player_1_id="vb_a", player_2_id="vb_b", winner_id="vb_a",
+                stats_available=False, raw={},
+            ),
+            HistoricalMatchSnapshot(
+                provider="valuebetennis", external_id="vb-late",
+                match_date="2025-01-05 13:00:00", tour="ATP", surface="dur",
+                player_1_id="vb_a", player_2_id="vb_c", winner_id="vb_c",
+                stats_available=False, raw={},
+            ),
+        ])
+        result = generate_pre_match_forecast(
+            session, player_1_id="vb_a", player_2_id="vb_b",
+            surface="hard", before="2025-01-05T12:00:00Z",
+        )
+        assert result["history_coverage"]["player_1_matches"] == 1
+        assert result["history_coverage"]["player_2_matches"] == 1
+        assert result["history_coverage"]["head_to_head_matches"] == 1
+        assert result["history_coverage"]["stored_rows_used"] == 1
+        assert result["historical_elo"]["player"]["overall_matches"] == 1
+        assert result["historical_elo"]["opponent"]["overall_matches"] == 1
+    engine.dispose()
