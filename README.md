@@ -228,3 +228,24 @@ These signals are intentionally reported side by side. Historical Elo is not ble
 The historical Elo walk-forward endpoint now fits a Platt logistic calibration only on the earlier 60% of its out-of-sample predictions and evaluates the calibrated probabilities on the later 40%, which remains untouched during fitting. The response reports raw Elo and calibrated holdout accuracy, Brier score and log loss, along with the calibration parameters and sample sizes. Calibration is withheld when the training sample is too small or contains only one outcome class.
 
 This is calibration of the Elo baseline, not yet a validated Elo + live-stat ensemble. It does not create bookmaker value flags or ROI. The historical archive currently has no verified timestamped pre-match odds join to the Cito historical match IDs; bookmaker advantage and profitability cannot be measured until that identity/timestamp linkage exists. Do not use in-sample calibration plots as proof of edge.
+
+
+## Smart Match Watchlist (opt-in)
+
+The Smart Match Watchlist is disabled by default and does not change the existing live-board endpoints.
+
+Enable it by setting:
+
+```bash
+TENNIS_SMART_MATCH_WATCHLIST_ENABLED=true
+```
+
+When enabled, a successful `POST /matches/{match_id}/analyze-live/auto` automatically adds that Cito match to the watchlist. A match can also be added explicitly with `POST /watchlist` and body `{"match_id":"CITO_MATCH_ID"}`.
+
+- `GET /watchlist` lists active watched matches and makes no Cito requests.
+- `DELETE /watchlist/{match_id}` stops watching a match while retaining its audit row.
+- `POST /watchlist/poll` fetches one Cito detail request per active watched match (up to 25 per call); it does not fetch the full live board. Never-checked and least-recently-checked matches are polled first so large lists do not starve older entries.
+- The dashboard exposes add/stop controls and a manual polling action. Polling is deliberately user-triggered in this release; no serverless background scheduler or recurring Cito quota spend is enabled.
+- Matches with an explicit terminal status returned by Cito are deactivated automatically. Provider 404/410 responses also retire stale IDs; transient failures such as rate limits and timeouts remain active for retry.
+
+The watchlist is stored in the configured SQL database. This first version provides an explicit polling endpoint; it does not create a background scheduler. The feature flag is a rollback switch: set it to `false` or remove it to restore the prior application behavior. No production environment variable or deployment is changed by this PR.
