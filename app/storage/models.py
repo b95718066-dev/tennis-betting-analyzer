@@ -147,3 +147,23 @@ class HistoricalMatchSnapshot(Base):
     raw: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class SmartMatchWatchlist(Base):
+    """Cito matches intentionally monitored by the Smart Match Watchlist."""
+
+    __tablename__ = "smart_match_watchlist"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_match_id", name="uq_watchlist_provider_match"),
+        Index("ix_watchlist_active_status", "active", "last_checked_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False, default="cito")
+    external_match_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_status: Mapped[str | None] = mapped_column(String(40))
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
