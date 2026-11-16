@@ -773,7 +773,7 @@ async def get_player_historical_stats(
     surface: str | None = Query(default=None, pattern="^(hard|clay|grass|carpet)$"),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
-    """Aggregate prior Cito serve/return counts without using future match data."""
+    """Return prior Cito match-result features without inferring serve/return rates."""
     engine = build_engine()
     try:
         create_schema(engine)
