@@ -94,7 +94,10 @@ def generate_pre_match_forecast(
         ),
         HistoricalMatchSnapshot.match_date.is_not(None),
         HistoricalMatchSnapshot.winner_id.is_not(None),
-    ).order_by(HistoricalMatchSnapshot.match_date.asc(), HistoricalMatchSnapshot.id.asc())
+    ).order_by(
+        HistoricalMatchSnapshot.match_date.asc(),
+        HistoricalMatchSnapshot.id.asc(),
+    )
 
     # Forecast features need only six scalar columns. Avoid hydrating each
     # JSON-heavy ORM row for players with long careers in the 480k-match archive.
