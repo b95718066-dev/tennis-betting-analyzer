@@ -112,3 +112,48 @@ def test_historical_player_search_returns_only_matching_archived_identities():
         assert result["players"][0]["name"] == "Elina Svitolina"
         assert result["players"][0]["tour"] == "WTA"
     engine.dispose()
+
+
+def test_pre_match_forecast_uses_valuebetennis_history_and_searches_flat_csv_names():
+    from app.storage.models import HistoricalMatchSnapshot
+    from app.services.pre_match_forecast import search_historical_players
+
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    with Session(engine) as session, session.begin():
+        session.add_all([
+            HistoricalMatchSnapshot(
+                provider="valuebetennis", external_id="vb-1",
+                match_date="2024-01-01 12:00:00", tour="ATP", surface="hard",
+                player_1_id="vb_100", player_2_id="vb_200", winner_id="vb_100",
+                stats_available=False,
+                raw={"player_1_name": "Carlos Alcaraz", "player_2_name": "Jannik Sinner"},
+            ),
+            HistoricalMatchSnapshot(
+                provider="valuebetennis", external_id="vb-2",
+                match_date="2024-01-02 12:00:00", tour="ATP", surface="hard",
+                player_1_id="vb_100", player_2_id="vb_300", winner_id="vb_100",
+                stats_available=False,
+                raw={"player_1_name": "Carlos Alcaraz", "player_2_name": "Daniil Medvedev"},
+            ),
+            HistoricalMatchSnapshot(
+                provider="valuebetennis", external_id="vb-future",
+                match_date="2025-01-06 12:00:00", tour="ATP", surface="hard",
+                player_1_id="vb_100", player_2_id="vb_200", winner_id="vb_200",
+                stats_available=False, raw={},
+            ),
+        ])
+        result = generate_pre_match_forecast(
+            session, player_1_id="vb_100", player_2_id="vb_200",
+            surface="hard", before="2025-01-05T12:00:00+00:00",
+        )
+        assert result["history_coverage"]["player_1_matches"] == 2
+        assert result["history_coverage"]["player_2_matches"] == 1
+        assert result["history_coverage"]["stored_rows_used"] == 2
+        assert "Valuebetennis" in result["history_coverage"]["source"]
+
+        players = search_historical_players(session, query="alcaraz", tour="ATP")
+        assert players["count"] == 1
+        assert players["players"][0]["player_id"] == "vb_100"
+        assert players["players"][0]["matches_in_archive"] == 3
+    engine.dispose()
