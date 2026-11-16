@@ -1,5 +1,7 @@
 from typing import Any
 import os
+import re
+import httpx
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
@@ -740,6 +742,22 @@ async def preview_admin_history_sync(
         return result
     finally:
         engine.dispose()
+
+
+@app.get("/__preview_admin/valuebetennis-link", include_in_schema=False)
+async def preview_valuebetennis_link(
+    token: str = Query(min_length=32, max_length=128),
+    year: int = Query(ge=2021, le=2026),
+):
+    expected = os.getenv("PREVIEW_HISTORY_SYNC_TOKEN")
+    if not expected or not __import__("secrets").compare_digest(token, expected):
+        raise HTTPException(status_code=404, detail="Not found.")
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        response = await client.get("https://www.valuebetennis.com/en/donnees.htm")
+        response.raise_for_status()
+    pattern = rf"""href=["']([^"']*valuebetennis-matchs-{year}\.csv[^"']*)["']"""
+    links = re.findall(pattern, response.text, flags=re.IGNORECASE)
+    return {"year": year, "links": links[:5], "page_status": response.status_code}
 
 
 @app.post("/history/sync")
