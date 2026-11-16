@@ -699,6 +699,49 @@ async def player_recent_form(
 
 
 
+@app.get("/__preview_admin/history-sync", include_in_schema=False)
+async def preview_admin_history_sync(
+    token: str = Query(min_length=32, max_length=128),
+    tour: str = Query(pattern="^(ATP|WTA)$"),
+    year: int = Query(ge=2000, le=2026),
+    page: int = Query(default=1, ge=1, le=20),
+):
+    """Temporary, token-gated one-page history import for isolated Preview only."""
+    expected = os.getenv("PREVIEW_HISTORY_SYNC_TOKEN")
+    if not expected or not __import__("secrets").compare_digest(token, expected):
+        raise HTTPException(status_code=404, detail="Not found.")
+    provider = _live_provider()
+    try:
+        payload = await provider.fetch_historical_matches(
+            tour=tour, year=year, page=page, page_size=100, include_stats=True,
+        )
+    except ProviderHttpError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Historical provider request failed (HTTP {error.status_code or 'network error'}).",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            result = persist_historical_rows(session, payload["items"])
+        result.update({
+            "provider": "cito", "tour": tour, "year": year,
+            "page": payload.get("page", page),
+            "page_size": payload.get("page_size", 100),
+            "total": payload.get("total"),
+            "total_pages": payload.get("total_pages"),
+            "has_next": payload.get("has_next"),
+            "stats_rows": sum(bool(row.get("stats_available")) for row in payload["items"]),
+        })
+        return result
+    finally:
+        engine.dispose()
+
+
 @app.post("/history/sync")
 async def sync_historical_matches(
     tour: str = Query(pattern="^(ATP|WTA)$"),
