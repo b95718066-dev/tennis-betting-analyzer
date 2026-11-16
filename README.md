@@ -207,13 +207,14 @@ Example request body:
 
 ## Sprint 15: walk-forward historical Elo validation
 
-- `GET /backtest/historical-elo?min_training_matches=10&surface=clay` evaluates the stored Cito archive with an expanding chronological window. It does not call the provider or change the existing prediction endpoint.
-- For each timestamped match, both players' pre-match ratings are used to generate the probability first; the match result is applied only afterward. Matches with identical timestamps are all predicted from the same frozen rating state before any result in that timestamp group is applied.
-- The default warm-up requires at least 10 prior recorded matches for each player. Change `min_training_matches` to adjust this threshold. Surface Elo uses the existing 35% blend only after five prior matches on that surface.
-- Reports out-of-sample match count, warm-up/date-only exclusions, accuracy, Brier score, log loss and calibration buckets. A sample of up to 100 individual predictions includes pre-match ratings and prior-match counts.
-- Date-only archive rows are never scored because their exact start time is unknown; they can update ratings only at the end of their calendar day for subsequent dates. Invalid rows are skipped.
-- ROI/Yield are intentionally not reported: this evaluation does not yet have a verified, timestamped pre-match odds join. It is a model-probability validation, not a profitability claim.
-- The evaluation is limited by whatever historical matches are already stored locally. It is a transparent Elo baseline, not a trained model or evidence of a betting edge.
+- `GET /backtest/historical-elo?min_training_matches=10&surface=clay&min_ev=0.03` evaluates stored Cito and Valuebetennis match outcomes with an expanding chronological window. It does not call either provider or change the existing live prediction endpoint.
+- Valuebetennis documents its CSV `date` column as match date/time in UTC. Its timestamps omit a timezone suffix in the CSV, so the backtest explicitly interprets those source-specific date-times as UTC. Cito rows containing only a calendar date are never scored; they update ratings at the end of that UTC day for later matches.
+- For each timestamp group, all predictions use the same frozen pre-match ratings; only after the group is scored are its outcomes applied. The default warm-up requires at least 10 prior matches for both players.
+- A surface filter controls which matches are scored, not which results train overall Elo. All earlier surfaces update overall and surface-specific ratings; surface Elo is blended at 35% only after five prior matches on that surface.
+- Reports source coverage, out-of-sample count, warm-up/date-only/surface exclusions, accuracy, Brier score, log loss, calibration buckets and a chronological Platt holdout. Up to 100 sample predictions include pre-match ratings and source IDs.
+- When paired Valuebetennis closing odds are present, `odds_backtest` simulates one-unit stakes when model EV meets `min_ev`. It reports paired-odds coverage, bets, wins, net units, ROI, Yield, mean market overround and maximum drawdown.
+- Valuebetennis describes closing prices as the last odds recorded before the match. This makes them pre-match reference prices, but not a timestamped record of the exact price available at an earlier betting decision. The ROI is a historical simulation, not evidence of executable profit; fees, slippage, bookmaker limits and execution failures are not modeled.
+- The evaluation remains a transparent Elo baseline, not a trained ensemble or proof of a betting edge.
 
 
 ## Sprint 17: integrated live match analysis
