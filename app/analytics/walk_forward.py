@@ -195,9 +195,13 @@ def walk_forward_historical_elo(
     surface_ratings: dict[str, dict[str, float]] = defaultdict(dict)
     surface_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     predictions: list[tuple[float, bool]] = []
+    odds_bets: list[tuple[float, bool]] = []
+    paired_closing_odds = 0
+    closing_overround_sum = 0.0
     scored = 0
     warmup_skipped = 0
     date_only_skipped = 0
+    surface_filtered = 0
     prediction_rows = []
 
     # Equal timestamps are predicted from the same frozen state, then updated.
@@ -210,25 +214,33 @@ def walk_forward_historical_elo(
             index += 1
 
         pending_updates = []
-        for _, is_date_only, _, row, row_surface in group:
-            p1, p2, winner = row.player_1_id, row.player_2_id, row.winner_id
+        for (
+            match_time, is_date_only, _, provider, external_id, p1, p2, winner,
+            row_surface, closing_1, closing_2,
+        ) in group:
             if is_date_only:
                 date_only_skipped += 1
+            elif surface and row_surface != surface.lower():
+                surface_filtered += 1
             else:
                 trained = min(overall_counts[p1], overall_counts[p2])
                 if trained < min_training_matches:
                     warmup_skipped += 1
                 else:
-                    active_surface = row_surface if row_surface in VALID_SURFACES else "hard"
-                    r1 = _effective_rating(p1, active_surface, overall, surface_ratings, surface_counts)
-                    r2 = _effective_rating(p2, active_surface, overall, surface_ratings, surface_counts)
+                    r1 = _effective_rating(
+                        p1, row_surface, overall, surface_ratings, surface_counts
+                    )
+                    r2 = _effective_rating(
+                        p2, row_surface, overall, surface_ratings, surface_counts
+                    )
                     probability = expected_probability(r1, r2)
                     outcome = winner == p1
                     predictions.append((probability, outcome))
                     scored += 1
-                    prediction_rows.append({
-                        "match_id": row.external_id,
-                        "match_date": row.match_date,
+                    prediction_item = {
+                        "match_id": external_id,
+                        "provider": provider,
+                        "match_date": match_time.isoformat(),
                         "player_1_id": p1,
                         "player_2_id": p2,
                         "player_1_win_probability": round(probability, 6),
@@ -237,7 +249,34 @@ def walk_forward_historical_elo(
                         "player_2_pre_match_elo": round(r2, 2),
                         "prior_matches_player_1": overall_counts[p1],
                         "prior_matches_player_2": overall_counts[p2],
-                    })
+                    }
+                    if closing_1 is not None and closing_2 is not None:
+                        paired_closing_odds += 1
+                        overround = 1.0 / closing_1 + 1.0 / closing_2 - 1.0
+                        closing_overround_sum += overround
+                        ev_1 = probability * closing_1 - 1.0
+                        ev_2 = (1.0 - probability) * closing_2 - 1.0
+                        prediction_item["closing_odds"] = {
+                            "player_1": closing_1,
+                            "player_2": closing_2,
+                            "market_overround": round(overround, 6),
+                            "model_ev_player_1": round(ev_1, 6),
+                            "model_ev_player_2": round(ev_2, 6),
+                        }
+                        best_ev = max(ev_1, ev_2)
+                        if best_ev >= min_ev:
+                            selected_side = 1 if ev_1 >= ev_2 else 2
+                            selected_odds = closing_1 if selected_side == 1 else closing_2
+                            won = outcome if selected_side == 1 else not outcome
+                            profit = selected_odds - 1.0 if won else -1.0
+                            odds_bets.append((profit, won))
+                            prediction_item["simulated_bet"] = {
+                                "selection": "player_1" if selected_side == 1 else "player_2",
+                                "expected_value": round(best_ev, 6),
+                                "won": won,
+                                "flat_stake_profit_units": round(profit, 6),
+                            }
+                    prediction_rows.append(prediction_item)
             pending_updates.append((p1, p2, winner, row_surface))
 
         for p1, p2, winner, row_surface in pending_updates:
