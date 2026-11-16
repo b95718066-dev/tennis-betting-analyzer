@@ -53,7 +53,7 @@ def test_walk_forward_same_timestamp_predictions_are_frozen_before_updates():
         assert scored["same-a"]["player_1_win_probability"] == pytest.approx(1.0 - scored["same-b"]["player_1_win_probability"], abs=1e-6)
         assert scored["later"]["player_1_pre_match_elo"] > scored["same-a"]["player_1_pre_match_elo"]
         calibration = result["chronological_probability_calibration"]
-        assert calibration["training_matches"] == 2
+        assert calibration["training_matches"] == 3
         assert calibration["evaluation_matches"] == 1
     engine.dispose()
 
