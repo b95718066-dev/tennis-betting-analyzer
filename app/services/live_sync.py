@@ -35,7 +35,7 @@ def persist_live_rows(session: Session, rows: list[dict[str, Any]]) -> dict[str,
         })
 
     return {
-        "provider": "cito",
+        "provider": rows[0].get("provider", "cito") if rows else "cito",
         "fetched_count": len(rows),
         "persisted_count": len(persisted),
         "unmapped_count": unmapped,
