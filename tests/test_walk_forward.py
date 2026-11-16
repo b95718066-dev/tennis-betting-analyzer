@@ -158,6 +158,7 @@ def test_walk_forward_includes_valuebetennis_utc_timestamps_and_closing_odds_roi
         assert prediction["match_date"] == "2025-01-06T12:00:00+00:00"
         assert prediction["prior_matches_player_1"] == 5
         assert prediction["closing_odds"]["player_1"] == 4.0
+        assert prediction["closing_odds"]["market_probability_without_margin"]["player_1"] == pytest.approx(0.230769)
         assert prediction["simulated_bet"]["selection"] == "player_1"
         assert result["odds_backtest"]["matches_with_paired_closing_odds"] == 1
         assert result["odds_backtest"]["bets_placed"] == 1
