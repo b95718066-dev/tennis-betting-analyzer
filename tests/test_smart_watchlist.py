@@ -156,3 +156,51 @@ async def test_watchlist_is_hidden_when_feature_flag_is_disabled(monkeypatch):
         response = await client.get("/watchlist")
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_successful_auto_analysis_enrolls_match_when_feature_is_enabled(
+    monkeypatch, tmp_path,
+):
+    import httpx
+    import app.main as api
+
+    class FakeProvider:
+        async def fetch_live_stats_detail(self, match_id):
+            assert match_id == "auto-watch-123"
+            return {
+                "stats_available": True,
+                "stats": {
+                    "player1": {"service_points_won": 24, "service_points_played": 35},
+                    "player2": {"service_points_won": 18, "service_points_played": 30},
+                },
+            }
+
+    def fake_analyze(session, **kwargs):
+        return {
+            "event_id": kwargs["match_id"],
+            "probability_model": {
+                "player_1_match_probability": 0.57,
+                "player_2_match_probability": 0.43,
+            },
+        }
+
+    monkeypatch.setenv("TENNIS_SMART_MATCH_WATCHLIST_ENABLED", "true")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'auto-watch.db'}")
+    monkeypatch.setattr(api, "_live_provider", lambda: FakeProvider())
+    monkeypatch.setattr(api, "analyze_stored_live_match", fake_analyze)
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        analyzed = await client.post(
+            "/matches/auto-watch-123/analyze-live/auto",
+            json={"auto_record": False},
+        )
+        watchlist = await client.get("/watchlist")
+
+    assert analyzed.status_code == 200
+    assert analyzed.json()["watchlist"] == {
+        "enabled": True, "watching": True, "match_id": "auto-watch-123",
+    }
+    assert watchlist.status_code == 200
+    assert watchlist.json()["count"] == 1
+    assert watchlist.json()["matches"][0]["source"] == "analyzed"
