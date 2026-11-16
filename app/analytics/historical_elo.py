@@ -49,7 +49,7 @@ def historical_elo_ratings(
     cutoff = _parse_cutoff(before)
     rows = session.scalars(
         select(HistoricalMatchSnapshot).where(
-            HistoricalMatchSnapshot.provider == "cito",
+            HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
             HistoricalMatchSnapshot.match_date.is_not(None),
             HistoricalMatchSnapshot.winner_id.is_not(None),
             HistoricalMatchSnapshot.player_1_id.is_not(None),
@@ -107,7 +107,7 @@ def historical_elo_ratings(
     o = player_result(opponent_id)
     probability = expected_probability(p["effective_elo"], o["effective_elo"])
     return {
-        "provider": "cito_historical_match_snapshots",
+        "provider": "combined_cito_valuebetennis_historical_match_snapshots",
         "cutoff_exclusive": cutoff.isoformat(),
         "surface": surface.lower(),
         "player": p,
@@ -124,7 +124,7 @@ def historical_elo_ratings(
         },
         "limitations": [
             "This is a transparent baseline Elo replay, not a trained or calibrated betting model.",
-            "Only stored Cito match outcomes with resolved player IDs and winner IDs are used.",
+            "Stored Cito and Valuebetennis match outcomes with resolved, source-namespaced player IDs and winner IDs are used.",
             "Date-only matches on the cutoff calendar day are excluded.",
             "No inactivity decay, tournament-level K factor, retirement adjustment or doubles modeling is applied.",
         ],
