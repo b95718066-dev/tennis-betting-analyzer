@@ -204,3 +204,42 @@ async def test_successful_auto_analysis_enrolls_match_when_feature_is_enabled(
     assert watchlist.status_code == 200
     assert watchlist.json()["count"] == 1
     assert watchlist.json()["matches"][0]["source"] == "analyzed"
+
+
+@pytest.mark.asyncio
+async def test_poll_retires_missing_matches_but_keeps_transient_failures(
+    monkeypatch, tmp_path,
+):
+    import httpx
+    import app.main as api
+    from app.data.providers.http import ProviderHttpError
+
+    monkeypatch.setenv("TENNIS_SMART_MATCH_WATCHLIST_ENABLED", "true")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'poll-errors.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'poll-errors.db'}")
+    create_schema(engine)
+    with Session(engine) as session, session.begin():
+        watch_match(session, "cito-gone")
+        watch_match(session, "cito-temporary-error")
+    engine.dispose()
+
+    class FailingProvider:
+        async def fetch_live_match_detail(self, match_id):
+            if match_id == "cito-gone":
+                raise ProviderHttpError("cito", 404, "not found")
+            raise ProviderHttpError("cito", 429, "rate limited")
+
+    monkeypatch.setattr(api, "_live_provider", lambda: FailingProvider())
+    transport = httpx.ASGITransport(app=api.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        polled = await client.post("/watchlist/poll")
+        listed = await client.get("/watchlist")
+
+    assert polled.status_code == 200
+    outcomes = {row["match_id"]: row for row in polled.json()["matches"]}
+    assert outcomes["cito-gone"]["error"] == "match_not_found"
+    assert outcomes["cito-gone"]["active"] is False
+    assert outcomes["cito-temporary-error"]["error"] == "provider_unavailable"
+    assert outcomes["cito-temporary-error"]["active"] is True
+    assert listed.json()["count"] == 1
+    assert listed.json()["matches"][0]["match_id"] == "cito-temporary-error"
