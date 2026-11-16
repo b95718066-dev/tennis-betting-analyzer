@@ -581,10 +581,11 @@ async def analyze_live_match_value_auto(
                 odds_payload, event_id=match_id,
                 player_1_name=player_1_name, player_2_name=player_2_name,
             )
-        except ProviderHttpError as error:
+        except (ProviderHttpError, ValueError) as error:
+            status = error.status_code if isinstance(error, ProviderHttpError) else None
             raise HTTPException(
                 status_code=502,
-                detail=f"Tennis API odds request failed (HTTP {error.status_code or 'network error'}).",
+                detail=f"Tennis API odds request failed (HTTP {status or 'upstream error'}).",
             ) from error
     engine = build_engine()
     try:
