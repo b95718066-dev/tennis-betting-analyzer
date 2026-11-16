@@ -21,7 +21,7 @@ from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
 from .services.live_sync import persist_live_rows
 from .services.historical_sync import persist_historical_rows, player_history_features
-from .services.odds_sync import persist_odds_events
+from .services.odds_sync import persist_odds_events, persist_odds_snapshots
 from .services.live_value import analyze_stored_live_match
 from .services.pre_match_forecast import generate_pre_match_forecast, search_historical_players
 from .storage.database import build_engine, create_schema
@@ -133,9 +133,10 @@ def _live_provider():
     settings = ProviderSettings.from_env()
     if settings.live_provider == "none":
         raise HTTPException(status_code=503, detail="Live data provider is not configured.")
-    if settings.live_provider != "cito":
+    if settings.live_provider not in {"cito", "tennis_api"}:
         raise HTTPException(status_code=503, detail="Configured live provider is not supported.")
-    if not settings.api_key:
+    configured_key = settings.tennis_api_key if settings.live_provider == "tennis_api" else settings.api_key
+    if not configured_key:
         raise HTTPException(status_code=503, detail="Live provider API key is not configured.")
     return build_live_provider(settings)
 
