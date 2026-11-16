@@ -129,7 +129,7 @@ def _odds_backtest_summary(
     min_ev: float,
 ) -> dict[str, Any]:
     stake = float(len(bets))
-    net_profit = sum(profit for profit, _ in bets)
+    net_profit = sum(profit for _, profit, _ in bets)
     cumulative = peak = max_drawdown = 0.0
     current_timestamp = None
     current_group_profit = 0.0
