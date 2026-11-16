@@ -249,3 +249,26 @@ When enabled, a successful `POST /matches/{match_id}/analyze-live/auto` automati
 - Matches with an explicit terminal status returned by Cito are deactivated automatically. Provider 404/410 responses also retire stale IDs; transient failures such as rate limits and timeouts remain active for retry.
 
 The watchlist is stored in the configured SQL database. This first version provides an explicit polling endpoint; it does not create a background scheduler. The feature flag is a rollback switch: set it to `false` or remove it to restore the prior application behavior. No production environment variable or deployment is changed by this PR.
+
+
+## Sprint 10: data-backed pre-match forecasts
+
+- `POST /predict/historical` generates a pre-match forecast directly from stored Cito historical match snapshots; callers provide stable player IDs and court surface rather than manually entering Elo ratings and recent-form arrays.
+- The service replays as-of Elo, derives each player's completed-match form and surface history, and extracts head-to-head meetings from the same stored archive.
+- An optional timezone-aware `before` timestamp creates a historical as-of forecast. Future matches and date-only rows on the cutoff calendar day are excluded.
+- Optional paired decimal odds produce margin-removed market probabilities, expected value and a configurable EV threshold.
+- The current pre-match model uses Elo as its anchor and applies small Beta-prior-shrunk adjustments for recent form, surface performance and H2H. Each response includes signal sample sizes and history coverage.
+- **Model status:** experimental and uncalibrated. Data-coverage labels describe how much history was available, not statistical certainty. Do not treat value flags as betting recommendations until chronological holdout calibration and timestamped odds backtests demonstrate an edge.
+
+Example request:
+
+```json
+{
+  "player_1_id": "CITO_PLAYER_ID_1",
+  "player_2_id": "CITO_PLAYER_ID_2",
+  "surface": "hard",
+  "player_1_odds": 1.85,
+  "player_2_odds": 2.05,
+  "min_ev": 0.03
+}
+```
