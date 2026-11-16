@@ -126,14 +126,14 @@ def test_walk_forward_includes_valuebetennis_utc_timestamps_and_closing_odds_roi
             session.add(HistoricalMatchSnapshot(
                 provider="valuebetennis", external_id=f"vb-clay-{day}",
                 match_date=f"2025-01-{day:02d} 12:00:00",
-                tour="ATP", surface="clay",
+                tour="ATP", surface="terre battue",
                 player_1_id="vb_a", player_2_id="vb_b", winner_id="vb_a",
                 stats_available=False, raw={},
             ))
         session.add(HistoricalMatchSnapshot(
             provider="valuebetennis", external_id="vb-hard-target",
             match_date="2025-01-06 12:00:00",
-            tour="ATP", surface="hard",
+            tour="ATP", surface="dur",
             player_1_id="vb_a", player_2_id="vb_b", winner_id="vb_a",
             stats_available=False,
             raw={"cote1_cloture": "4.0", "cote2_cloture": "1.2"},
