@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analytics.elo import DEFAULT_K_FACTOR, DEFAULT_RATING, expected_probability, update_elo
+from app.data.normalization import normalize_surface
 from app.storage.models import HistoricalMatchSnapshot
 
 SURFACE_WEIGHT = 0.35
@@ -82,7 +83,7 @@ def historical_elo_ratings(
         overall[p1], overall[p2] = n1, n2
         overall_matches[p1] = overall_matches.get(p1, 0) + 1
         overall_matches[p2] = overall_matches.get(p2, 0) + 1
-        normalized_surface = (match_surface or "").lower()
+        normalized_surface = normalize_surface(match_surface) or "unknown"
         if normalized_surface in VALID_SURFACES:
             ratings = surface_ratings.setdefault(normalized_surface, {})
             counts = surface_matches.setdefault(normalized_surface, {})
