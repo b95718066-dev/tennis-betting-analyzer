@@ -62,7 +62,7 @@ def generate_pre_match_forecast(
     player_2_odds: float | None = None,
     min_ev: float = 0.03,
 ) -> dict[str, Any]:
-    """Build a forecast using only stored Cito matches strictly before the cutoff."""
+    """Build a forecast using stored Cito and Valuebetennis matches strictly before the cutoff."""
     if not player_1_id.strip() or not player_2_id.strip() or player_1_id == player_2_id:
         raise ValueError("Two distinct, non-empty player IDs are required.")
     normalized_surface = surface.strip().lower()
@@ -81,7 +81,7 @@ def generate_pre_match_forecast(
     )
     rows = session.scalars(
         select(HistoricalMatchSnapshot).where(
-            HistoricalMatchSnapshot.provider == "cito",
+            HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
             or_(
                 HistoricalMatchSnapshot.player_1_id.in_([player_1_id, player_2_id]),
                 HistoricalMatchSnapshot.player_2_id.in_([player_1_id, player_2_id]),
@@ -142,7 +142,7 @@ def generate_pre_match_forecast(
             "player_2_matches": len(histories[player_2_id]),
             "head_to_head_matches": len(h2h_matches),
             "stored_rows_used": len(eligible),
-            "source": "stored Cito historical match snapshots",
+            "source": "stored Cito and Valuebetennis historical match snapshots",
             "date_only_policy": "date-only rows on the as-of calendar day are excluded",
         },
     }
@@ -178,7 +178,7 @@ def search_historical_players(
         raise ValueError("tour must be ATP or WTA.")
 
     statement = select(HistoricalMatchSnapshot).where(
-        HistoricalMatchSnapshot.provider == "cito",
+        HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
         HistoricalMatchSnapshot.player_1_id.is_not(None),
         HistoricalMatchSnapshot.player_2_id.is_not(None),
     ).order_by(HistoricalMatchSnapshot.match_date.desc())
@@ -193,7 +193,7 @@ def search_historical_players(
             node = raw.get(key) or raw.get(f"player_{side}") or {}
             if not isinstance(node, dict) or not player_id:
                 continue
-            name = node.get("name") or node.get("full_name") or node.get("display_name")
+            name = (node.get("name") or node.get("full_name") or node.get("display_name") or raw.get(f"player_{side}_name"))
             if not isinstance(name, str) or not name.strip():
                 continue
             name = name.strip()
@@ -216,6 +216,6 @@ def search_historical_players(
         "query": query,
         "tour": tour.upper() if tour else "ALL",
         "players": results,
-        "source": "stored Cito historical match snapshots",
-        "archive_note": "Search results are limited to players already present in the local historical archive.",
+        "source": "stored Cito and Valuebetennis historical match snapshots",
+        "archive_note": "Search results combine Cito and Valuebetennis players already present in the local archive; source-prefixed IDs keep identities separate.",
     }
