@@ -163,3 +163,59 @@ def generate_pre_match_forecast(
             "warning": "Experimental model probability; value flags are not validated betting recommendations.",
         }
     return result
+
+
+def search_historical_players(
+    session: Session, *, query: str, limit: int = 20, tour: str | None = None,
+) -> dict[str, Any]:
+    """Search the player identities already present in the historical archive."""
+    normalized_query = query.strip().casefold()
+    if len(normalized_query) < 2:
+        raise ValueError("Player search query must contain at least two characters.")
+    if not 1 <= limit <= 50:
+        raise ValueError("limit must be between 1 and 50.")
+    if tour is not None and tour.upper() not in {"ATP", "WTA"}:
+        raise ValueError("tour must be ATP or WTA.")
+
+    statement = select(HistoricalMatchSnapshot).where(
+        HistoricalMatchSnapshot.provider == "cito",
+        HistoricalMatchSnapshot.player_1_id.is_not(None),
+        HistoricalMatchSnapshot.player_2_id.is_not(None),
+    ).order_by(HistoricalMatchSnapshot.match_date.desc())
+    if tour:
+        statement = statement.where(HistoricalMatchSnapshot.tour == tour.upper())
+
+    players: dict[str, dict[str, Any]] = {}
+    for row in session.scalars(statement).all():
+        raw = row.raw if isinstance(row.raw, dict) else {}
+        for side, player_id in ((1, row.player_1_id), (2, row.player_2_id)):
+            key = f"player{side}"
+            node = raw.get(key) or raw.get(f"player_{side}") or {}
+            if not isinstance(node, dict) or not player_id:
+                continue
+            name = node.get("name") or node.get("full_name") or node.get("display_name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            name = name.strip()
+            if normalized_query not in name.casefold():
+                continue
+            entry = players.setdefault(player_id, {
+                "player_id": player_id,
+                "name": name,
+                "tour": row.tour,
+                "matches_in_archive": 0,
+            })
+            entry["matches_in_archive"] += 1
+
+    results = sorted(
+        players.values(),
+        key=lambda item: (-item["matches_in_archive"], item["name"].casefold()),
+    )[:limit]
+    return {
+        "count": len(results),
+        "query": query,
+        "tour": tour.upper() if tour else "ALL",
+        "players": results,
+        "source": "stored Cito historical match snapshots",
+        "archive_note": "Search results are limited to players already present in the local historical archive.",
+    }
