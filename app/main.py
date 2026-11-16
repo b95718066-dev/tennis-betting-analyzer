@@ -27,7 +27,10 @@ from .services.live_value import analyze_stored_live_match
 from .storage.database import build_engine, create_schema
 from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, SmartMatchWatchlist, TennisMatch
 from .storage.repository import save_odds_snapshot
-from .services.smart_watchlist import list_watched_matches, unwatch_match, watch_match
+from .services.smart_watchlist import (
+    extract_match_status, is_terminal_match_status,
+    list_watched_matches, unwatch_match, watch_match,
+)
 
 
 app = FastAPI(
@@ -1149,45 +1152,61 @@ async def poll_smart_match_watchlist():
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory() as session:
-            rows = list_watched_matches(session)
+            rows = list_watched_matches(session, poll_priority=True)
             match_ids = [row.external_match_id for row in rows[:25]]
+            total_active = len(rows)
         if not match_ids:
-            return {"checked": 0, "matches": [], "note": "No active watched matches; no Cito requests made."}
+            return {
+                "checked": 0,
+                "matches": [],
+                "remaining_unpolled": 0,
+                "note": "No active watched matches; no Cito requests made.",
+            }
 
         provider = _live_provider()
         checked = []
-        terminal_statuses = {
-            "finished", "complete", "completed", "ended", "retired",
-            "walkover", "cancelled", "canceled", "abandoned",
-        }
         for match_id in match_ids:
             try:
                 payload = await provider.fetch_live_match_detail(match_id)
-                raw_status = str(
-                    payload.get("status") or payload.get("match_status") or ""
-                ).strip().lower()
-                is_terminal = raw_status in terminal_statuses
+                raw_status = extract_match_status(payload)
+                terminal = is_terminal_match_status(raw_status)
                 with factory.begin() as session:
                     row = session.scalar(select(SmartMatchWatchlist).where(
                         SmartMatchWatchlist.provider == "cito",
                         SmartMatchWatchlist.external_match_id == match_id,
                     ))
                     if row is not None:
-                        row.last_status = raw_status or None
+                        row.last_status = raw_status or row.last_status
                         row.last_checked_at = datetime.now(timezone.utc)
-                        if is_terminal:
+                        if terminal:
                             row.active = False
+                        still_active = row.active
+                    else:
+                        still_active = False
                 checked.append({
                     "match_id": match_id,
                     "status": raw_status or "unknown",
-                    "active": not is_terminal,
+                    "active": still_active,
+                    "finished": terminal,
                 })
             except (ProviderHttpError, ValueError):
-                checked.append({"match_id": match_id, "error": "provider_unavailable"})
+                # Record the attempt so one broken provider ID does not monopolize
+                # every batch. Keep the prior status and active state unchanged.
+                with factory.begin() as session:
+                    row = session.scalar(select(SmartMatchWatchlist).where(
+                        SmartMatchWatchlist.provider == "cito",
+                        SmartMatchWatchlist.external_match_id == match_id,
+                    ))
+                    if row is not None:
+                        row.last_checked_at = datetime.now(timezone.utc)
+                checked.append({
+                    "match_id": match_id,
+                    "error": "provider_unavailable",
+                })
         return {
             "checked": len(checked),
             "matches": checked,
-            "remaining_unpolled": max(0, len(rows) - len(match_ids)),
+            "remaining_unpolled": max(0, total_active - len(match_ids)),
             "note": "One detail request per watched match; no full live-board request is made.",
         }
     finally:
