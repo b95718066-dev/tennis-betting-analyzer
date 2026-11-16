@@ -80,3 +80,34 @@ def test_invalid_live_event_and_invalid_odds_are_not_fabricated():
         event_id="1",
     )
     assert snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_live_stats_uses_documented_service_points_won_and_played_counts():
+    async def handler(request):
+        assert request.url.path.endswith("/event/get/statistics/123456")
+        return httpx.Response(200, json={
+            "success": True,
+            "statistics": {
+                "ALL": {
+                    "points": {
+                        "servicePointsScored": {
+                            "player1": {"value": 28, "total": 40, "percentage": 70},
+                            "player2": {"value": 21, "total": 35, "percentage": 60},
+                        }
+                    }
+                }
+            }
+        })
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = TennisApiProvider(api_key="test-key", client=client)
+        payload = await provider.fetch_live_stats_detail("123456")
+
+    assert payload["provider"] == "tennis_api"
+    assert payload["stats"]["player1"] == {
+        "service_points_won": 28, "service_points_played": 40,
+    }
+    assert payload["stats"]["player2"] == {
+        "service_points_won": 21, "service_points_played": 35,
+    }
