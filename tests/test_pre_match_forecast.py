@@ -111,6 +111,12 @@ def test_historical_player_search_returns_only_matching_archived_identities():
         assert result["players"][0]["player_id"] == "wta_1"
         assert result["players"][0]["name"] == "Elina Svitolina"
         assert result["players"][0]["tour"] == "WTA"
+
+        # The tour selector must filter archive rows, not merely echo a label.
+        atp_only = search_historical_players(session, query="svi", tour="ATP")
+        assert atp_only["count"] == 0
+        all_tours = search_historical_players(session, query="svi")
+        assert all_tours["count"] == 1
     engine.dispose()
 
 
