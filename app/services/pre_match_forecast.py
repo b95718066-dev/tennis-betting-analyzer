@@ -203,6 +203,7 @@ def search_historical_players(
                 "player_id": player_id,
                 "name": name,
                 "tour": row.tour,
+                "provider": row.provider,
                 "matches_in_archive": 0,
             })
             entry["matches_in_archive"] += 1
