@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.data.normalization import normalize_surface
 from app.storage.models import HistoricalMatchSnapshot
 
 
@@ -75,7 +76,7 @@ def import_valuebetennis_csv_chunk(
                     "external_id": match_id,
                     "match_date": match_date,
                     "tour": tour,
-                    "surface": (row.get("surface") or "").strip().lower() or None,
+                    "surface": normalize_surface(row.get("surface")),
                     "player_1_id": p1,
                     "player_2_id": p2,
                     "winner_id": winner,
