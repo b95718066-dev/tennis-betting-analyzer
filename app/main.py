@@ -614,7 +614,12 @@ async def analyze_live_match_value_auto(
             stored = history_session.scalar(select(TennisMatch).where(
                 TennisMatch.provider == provider.name, TennisMatch.external_id == match_id,
             ))
-            if (
+            if provider.name != "cito":
+                result["historical_elo_signal"] = {
+                    "available": False,
+                    "reason": "Tennis API player IDs are not yet identity-mapped to the imported historical archive.",
+                }
+            elif (
                 stored is not None and stored.player_1_id and stored.player_2_id
                 and stored.surface in {"hard", "clay", "grass", "carpet"}
             ):
