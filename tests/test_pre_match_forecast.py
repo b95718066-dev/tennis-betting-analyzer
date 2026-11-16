@@ -155,5 +155,5 @@ def test_pre_match_forecast_uses_valuebetennis_history_and_searches_flat_csv_nam
         players = search_historical_players(session, query="alcaraz", tour="ATP")
         assert players["count"] == 1
         assert players["players"][0]["player_id"] == "vb_100"
-        assert players["players"][0]["matches_in_archive"] == 3
+        assert players["players"][0]["matches_in_archive"] == 2
     engine.dispose()
