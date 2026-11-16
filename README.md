@@ -275,3 +275,12 @@ Example request:
   "min_ev": 0.03
 }
 ```
+
+
+## Historical archive data source and attribution
+
+The isolated Preview archive can include historical ATP/WTA match results and pre-match odds from [Valuebetennis](https://www.valuebetennis.com/). The downloadable season CSV files are published under the **Creative Commons Attribution 4.0 International (CC BY 4.0)** license. Retain attribution to Valuebetennis and the license when redistributing derived datasets or exports.
+
+Imported rows preserve the original CSV fields in `raw`, including opening and closing winner odds where supplied. Valuebetennis player IDs are prefixed with `vb_` to keep them distinct from Cito IDs. The source contains match outcomes and odds, not point-by-point or serve statistics; those fields must not be inferred from this dataset.
+
+Historical forecasts combine Cito and Valuebetennis rows only when the source-specific player IDs match the requested player IDs. Backtests must use odds captured before match start, exclude any post-start price, and be evaluated chronologically with a held-out period. The presence of historical closing odds alone does not prove that a price was available at the decision timestamp.
