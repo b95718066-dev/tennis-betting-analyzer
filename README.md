@@ -228,3 +228,10 @@ These signals are intentionally reported side by side. Historical Elo is not ble
 The historical Elo walk-forward endpoint now fits a Platt logistic calibration only on the earlier 60% of its out-of-sample predictions and evaluates the calibrated probabilities on the later 40%, which remains untouched during fitting. The response reports raw Elo and calibrated holdout accuracy, Brier score and log loss, along with the calibration parameters and sample sizes. Calibration is withheld when the training sample is too small or contains only one outcome class.
 
 This is calibration of the Elo baseline, not yet a validated Elo + live-stat ensemble. It does not create bookmaker value flags or ROI. The historical archive currently has no verified timestamped pre-match odds join to the Cito historical match IDs; bookmaker advantage and profitability cannot be measured until that identity/timestamp linkage exists. Do not use in-sample calibration plots as proof of edge.
+
+
+## Sprint 19: probability skill against a neutral baseline
+
+- The historical Elo walk-forward report now includes the Brier score of a constant 50% forecast (0.25) and the Brier Skill Score relative to that no-information reference.
+- A positive skill score means the model's probability forecasts have lower squared probability error than a 50/50 forecast; zero means equal Brier performance; a negative score means worse performance.
+- The metric is reported for the full out-of-sample sample and for raw/calibrated chronological holdout comparisons. It is a probability-quality diagnostic only: it does not establish betting profitability, bookmaker value or an exploitable edge.

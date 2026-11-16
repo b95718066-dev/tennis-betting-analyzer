@@ -104,3 +104,18 @@ def test_platt_calibration_is_bounded_for_extreme_probabilities():
     from app.analytics.walk_forward import _apply_platt
     assert 0.0 < _apply_platt(0.000001, {"slope": 1.0, "intercept": 0.0}) < 1.0
     assert 0.0 < _apply_platt(0.999999, {"slope": 1.0, "intercept": 0.0}) < 1.0
+
+
+
+def test_walk_forward_reports_brier_skill_against_no_information_baseline():
+    from app.analytics.walk_forward import _score_probabilities
+
+    perfect = _score_probabilities([(0.99, True), (0.01, False)])
+    assert perfect["brier_score_50pct_baseline"] == 0.25
+    assert perfect["brier_skill_score_vs_50pct"] > 0.9
+
+    coin_flip = _score_probabilities([(0.5, True), (0.5, False)])
+    assert coin_flip["brier_skill_score_vs_50pct"] == pytest.approx(0.0)
+
+    worse_than_baseline = _score_probabilities([(0.1, True), (0.9, False)])
+    assert worse_than_baseline["brier_skill_score_vs_50pct"] < 0.0

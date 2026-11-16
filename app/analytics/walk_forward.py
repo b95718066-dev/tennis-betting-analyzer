@@ -98,10 +98,15 @@ def _score_probabilities(rows: list[tuple[float, bool]]) -> dict[str, float] | N
         return None
     n = len(rows)
     eps = 1e-15
+    brier = sum((p - float(y)) ** 2 for p, y in rows) / n
+    # A 50% forecast is the transparent no-information reference for a binary match.
+    baseline_brier = 0.25
     return {
         "matches": n,
         "accuracy": sum((p >= 0.5) == y for p, y in rows) / n,
-        "brier_score": sum((p - float(y)) ** 2 for p, y in rows) / n,
+        "brier_score": brier,
+        "brier_score_50pct_baseline": baseline_brier,
+        "brier_skill_score_vs_50pct": 1.0 - brier / baseline_brier,
         "log_loss": -sum(float(y) * log(max(p, eps)) + (1.0 - float(y)) * log(max(1.0 - p, eps)) for p, y in rows) / n,
     }
 
@@ -239,6 +244,8 @@ def walk_forward_historical_elo(
             "accuracy": sum((p >= 0.5) == y for p, y in predictions) / n,
             "hit_rate_player_1": wins / n,
             "brier_score": brier,
+            "brier_score_50pct_baseline": 0.25,
+            "brier_skill_score_vs_50pct": 1.0 - brier / 0.25,
             "log_loss": log_loss,
         }
         buckets: dict[int, list[tuple[float, bool]]] = defaultdict(list)
