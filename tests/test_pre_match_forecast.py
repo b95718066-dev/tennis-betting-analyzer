@@ -82,3 +82,33 @@ def test_pre_match_forecast_rejects_invalid_player_pair_and_surface():
                 surface="indoor", before="2025-01-05T12:00:00+00:00",
             )
     engine.dispose()
+
+
+def test_historical_player_search_returns_only_matching_archived_identities():
+    engine = create_engine("sqlite:///:memory:")
+    create_schema(engine)
+    rows = [
+        {
+            "id": "one", "date": "2025-01-01T10:00:00+00:00", "surface": "Hard",
+            "tour": "WTA",
+            "player1": {"id": "wta_1", "name": "Elina Svitolina"},
+            "player2": {"id": "wta_2", "name": "Mirra Andreeva"},
+            "winner_id": "wta_1",
+        },
+        {
+            "id": "two", "date": "2025-01-02T10:00:00+00:00", "surface": "Hard",
+            "tour": "ATP",
+            "player1": {"id": "atp_1", "name": "Alexander Zverev"},
+            "player2": {"id": "atp_2", "name": "Jannik Sinner"},
+            "winner_id": "atp_2",
+        },
+    ]
+    with Session(engine) as session, session.begin():
+        persist_historical_rows(session, rows)
+        from app.services.pre_match_forecast import search_historical_players
+        result = search_historical_players(session, query="svi", tour="WTA")
+        assert result["count"] == 1
+        assert result["players"][0]["player_id"] == "wta_1"
+        assert result["players"][0]["name"] == "Elina Svitolina"
+        assert result["players"][0]["tour"] == "WTA"
+    engine.dispose()
