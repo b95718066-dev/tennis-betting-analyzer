@@ -50,15 +50,33 @@ def _status(value: Any) -> MatchStatus:
     return MatchStatus.UNKNOWN
 
 
-def _surface(value: Any) -> Surface:
-    normalized = str(value or "").strip().lower()
-    mapping = {
-        "hard": Surface.HARD,
-        "clay": Surface.CLAY,
-        "grass": Surface.GRASS,
-        "carpet": Surface.CARPET,
+def normalize_surface(value: Any) -> str | None:
+    """Map documented provider surface labels to the canonical tennis surface."""
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.strip().casefold().split())
+    aliases = {
+        "hard": "hard",
+        "dur": "hard",
+        "dur intérieur": "hard",
+        "dur indoor": "hard",
+        "hard indoor": "hard",
+        "indoor hard": "hard",
+        "clay": "clay",
+        "terre battue": "clay",
+        "grass": "grass",
+        "gazon": "grass",
+        "carpet": "carpet",
+        "moquette": "carpet",
+        "moquette intérieur": "carpet",
+        "moquette indoor": "carpet",
     }
-    return mapping.get(normalized, Surface.UNKNOWN)
+    return aliases.get(normalized)
+
+
+def _surface(value: Any) -> Surface:
+    normalized = normalize_surface(value)
+    return Surface(normalized) if normalized else Surface.UNKNOWN
 
 
 def normalize_cito_live_match(row: dict[str, Any]) -> dict[str, Any] | None:
