@@ -156,4 +156,5 @@ def test_pre_match_forecast_uses_valuebetennis_history_and_searches_flat_csv_nam
         assert players["count"] == 1
         assert players["players"][0]["player_id"] == "vb_100"
         assert players["players"][0]["matches_in_archive"] == 2
+        assert players["players"][0]["provider"] == "valuebetennis"
     engine.dispose()
