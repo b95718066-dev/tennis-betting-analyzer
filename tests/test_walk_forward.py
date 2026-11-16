@@ -52,6 +52,9 @@ def test_walk_forward_same_timestamp_predictions_are_frozen_before_updates():
         assert scored["same-a"]["player_1_pre_match_elo"] == scored["same-b"]["player_2_pre_match_elo"]
         assert scored["same-a"]["player_1_win_probability"] == pytest.approx(1.0 - scored["same-b"]["player_1_win_probability"], abs=1e-6)
         assert scored["later"]["player_1_pre_match_elo"] > scored["same-a"]["player_1_pre_match_elo"]
+        calibration = result["chronological_probability_calibration"]
+        assert calibration["training_matches"] == 2
+        assert calibration["evaluation_matches"] == 1
     engine.dispose()
 
 
@@ -161,3 +164,17 @@ def test_walk_forward_includes_valuebetennis_utc_timestamps_and_closing_odds_roi
         assert result["odds_backtest"]["net_profit_units"] == pytest.approx(3.0)
         assert result["odds_backtest"]["roi_pct"] == pytest.approx(300.0)
     engine.dispose()
+
+
+
+def test_odds_drawdown_treats_same_timestamp_bets_as_one_group():
+    from datetime import datetime, timezone
+    from app.analytics.walk_forward import _odds_backtest_summary
+
+    timestamp = datetime(2025, 1, 1, 12, tzinfo=timezone.utc)
+    result = _odds_backtest_summary(
+        [(timestamp, -1.0, False), (timestamp, 2.0, True)],
+        paired_odds=2, overround_sum=0.1, min_ev=0.03,
+    )
+    assert result["net_profit_units"] == pytest.approx(1.0)
+    assert result["max_drawdown_units"] == pytest.approx(0.0)
