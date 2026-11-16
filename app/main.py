@@ -24,6 +24,7 @@ from .services.historical_sync import persist_historical_rows, player_history_fe
 from .storage.models import HistoricalMatchSnapshot
 from .services.odds_sync import persist_odds_events
 from .services.live_value import analyze_stored_live_match
+from .services.pre_match_forecast import generate_pre_match_forecast
 from .storage.database import build_engine, create_schema
 from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, SmartMatchWatchlist, TennisMatch
 from .storage.repository import save_odds_snapshot
@@ -107,6 +108,16 @@ class PredictionRequest(BaseModel):
     player_odds: float | None = Field(default=None, gt=1)
     opponent_odds: float | None = Field(default=None, gt=1)
     min_ev: float = Field(default=0.03, ge=0, le=1)
+
+
+class PreMatchForecastRequest(BaseModel):
+    player_1_id: str = Field(min_length=1, max_length=180)
+    player_2_id: str = Field(min_length=1, max_length=180)
+    surface: str = Field(pattern="(?i)^(hard|clay|grass|carpet)$")
+    before: datetime | None = None
+    player_1_odds: float | None = Field(default=None, gt=1, allow_inf_nan=False)
+    player_2_odds: float | None = Field(default=None, gt=1, allow_inf_nan=False)
+    min_ev: float = Field(default=0.03, ge=0, le=1, allow_inf_nan=False)
 
 
 def _odds_provider():
@@ -895,6 +906,34 @@ async def live_probability(request: LiveProbabilityRequest):
         return calculate_live_probabilities(**request.model_dump())
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/predict/historical")
+async def predict_historical_matchup(request: PreMatchForecastRequest):
+    """Generate a pre-match forecast from stored history without manual Elo inputs."""
+    before = request.before or datetime.now(timezone.utc)
+    if before.tzinfo is None or before.utcoffset() is None:
+        raise HTTPException(status_code=422, detail="before must include a timezone.")
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            try:
+                return generate_pre_match_forecast(
+                    session,
+                    player_1_id=request.player_1_id,
+                    player_2_id=request.player_2_id,
+                    surface=request.surface,
+                    before=before.astimezone(timezone.utc).isoformat(),
+                    player_1_odds=request.player_1_odds,
+                    player_2_odds=request.player_2_odds,
+                    min_ev=request.min_ev,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        engine.dispose()
 
 
 @app.post("/predict")
