@@ -134,7 +134,6 @@ def test_tennis_api_event_odds_are_persisted_without_cross_provider_linking():
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
 
-    from app.data.providers.tennis_api import TennisApiProvider
     from app.services.odds_sync import persist_odds_snapshots
     from app.storage.database import create_schema
     from app.storage.models import OddsObservation, ProviderMatchLink
