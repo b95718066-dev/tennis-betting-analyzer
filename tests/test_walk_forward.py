@@ -70,7 +70,8 @@ def test_walk_forward_never_scores_date_only_rows_and_reports_no_roi_without_odd
         assert result["coverage"]["out_of_sample_matches"] == 1
         assert result["metrics"]["matches"] == 1
         assert "odds_roi" in result["methodology"]
-        assert "not calculated" in result["methodology"]["odds_roi"]
+        assert result["odds_backtest"]["matches_with_paired_closing_odds"] == 0
+        assert result["odds_backtest"]["bets_placed"] == 0
     engine.dispose()
 
 
