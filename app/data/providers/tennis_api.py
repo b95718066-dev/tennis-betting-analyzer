@@ -56,6 +56,32 @@ class TennisApiProvider(HttpJsonProvider):
             raise ValueError("Tennis API live response must contain a results list.")
         return rows
 
+    async def fetch_live_stats_detail(self, event_id: str) -> dict[str, Any]:
+        """Fetch detailed statistics and adapt exact service-point counts to the model contract."""
+        if not str(event_id).isdigit():
+            raise ValueError("Tennis API live event ID must be numeric.")
+        payload = await self.get_json(f"{self.LIVE_PREFIX}event/get/statistics/{quote(str(event_id), safe='')}")
+        if not isinstance(payload, dict) or payload.get("success") is not True:
+            raise ValueError("Tennis API statistics response must contain success=true.")
+        statistics = payload.get("statistics") or {}
+        all_stats = statistics.get("ALL") if isinstance(statistics, dict) else None
+        points = all_stats.get("points") if isinstance(all_stats, dict) else None
+        metric = points.get("servicePointsScored") if isinstance(points, dict) else None
+        adapted = {}
+        for side in (1, 2):
+            raw = metric.get(f"player{side}") if isinstance(metric, dict) else None
+            if isinstance(raw, dict):
+                adapted[f"player{side}"] = {
+                    "service_points_won": raw.get("value"),
+                    "service_points_played": raw.get("total"),
+                }
+        return {
+            "provider": self.PROVIDER_NAME, "stats": adapted,
+            "stats_available": len(adapted) == 2,
+            "stats_unavailable_code": None if len(adapted) == 2 else "service_points_not_available",
+            "raw_statistics": payload,
+        }
+
     async def fetch_recent_odds(self, event_id: str, *, inplay: bool = True) -> dict[str, Any]:
         if not str(event_id).isdigit():
             raise ValueError("Tennis API live event ID must be numeric.")
@@ -134,7 +160,10 @@ class TennisApiProvider(HttpJsonProvider):
         }
 
     @staticmethod
-    def normalize_recent_odds(payload: dict[str, Any], *, event_id: str) -> list[OddsSnapshot]:
+    def normalize_recent_odds(
+        payload: dict[str, Any], *, event_id: str,
+        player_1_name: str = "player_1", player_2_name: str = "player_2",
+    ) -> list[OddsSnapshot]:
         result = payload.get("result")
         if not isinstance(result, dict):
             return []
@@ -156,12 +185,13 @@ class TennisApiProvider(HttpJsonProvider):
                     continue
                 odd_type = str(quote_data.get("oddType") or "").casefold()
                 is_live = odd_type == "inplay"
+                normalized_market = "h2h" if "full time result" in str(market_name).casefold() else str(market_name)
                 for selection, price in (
-                    ("player_1", odds_1), ("player_2", odds_2)
+                    (player_1_name, odds_1), (player_2_name, odds_2)
                 ):
                     snapshots.append(OddsSnapshot(
                         provider="tennis_api", external_match_id=str(event_id),
-                        bookmaker=bookmaker, market=str(market_name),
+                        bookmaker=bookmaker, market=normalized_market,
                         selection=selection, odds_decimal=price,
                         captured_at=captured, is_live=is_live,
                     ))
