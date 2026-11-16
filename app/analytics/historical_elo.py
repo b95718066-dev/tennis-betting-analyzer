@@ -26,7 +26,9 @@ def _parse_cutoff(before: str) -> datetime:
     return cutoff.astimezone(timezone.utc)
 
 
-def _eligible_date(value: str | None, cutoff: datetime) -> bool:
+def _eligible_date(
+    value: str | None, cutoff: datetime, provider: str,
+) -> bool:
     if not value:
         return False
     try:
@@ -34,6 +36,9 @@ def _eligible_date(value: str | None, cutoff: datetime) -> bool:
     except ValueError:
         return False
     if match_time.tzinfo is None or match_time.utcoffset() is None:
+        if provider == "valuebetennis" and len(value.strip()) > 10:
+            match_time = match_time.replace(tzinfo=timezone.utc)
+            return match_time < cutoff
         return match_time.date() < cutoff.date()
     return match_time.astimezone(timezone.utc) < cutoff
 
@@ -49,6 +54,7 @@ def historical_elo_ratings(
         raise ValueError("surface must be hard, clay, grass or carpet.")
     cutoff = _parse_cutoff(before)
     statement = select(
+        HistoricalMatchSnapshot.provider,
         HistoricalMatchSnapshot.match_date,
         HistoricalMatchSnapshot.surface,
         HistoricalMatchSnapshot.player_1_id,
@@ -72,8 +78,8 @@ def historical_elo_ratings(
     surface_matches: dict[str, dict[str, int]] = {}
     used_matches = 0
     for row in rows:
-        match_date, match_surface, p1, p2, winner = row
-        if not _eligible_date(match_date, cutoff):
+        provider, match_date, match_surface, p1, p2, winner = row
+        if not _eligible_date(match_date, cutoff, provider):
             continue
         if winner not in {p1, p2} or p1 == p2:
             continue
