@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.analytics.historical_elo import historical_elo_ratings
 from app.analytics.prediction import predict_match
 from app.analytics.probability import expected_value, remove_margin, value_bet
+from app.data.normalization import normalize_surface
 from app.storage.models import HistoricalMatchSnapshot
 
 
@@ -116,7 +117,7 @@ def generate_pre_match_forecast(
     h2h_matches = []
     for row in eligible:
         p1, p2 = row.player_1_id, row.player_2_id
-        normalized_match_surface = (row.surface or "").strip().lower()
+        normalized_match_surface = normalize_surface(row.surface) or "unknown"
         if p1 in histories:
             histories[p1].append({
                 "result": "W" if row.winner_id == p1 else "L",
