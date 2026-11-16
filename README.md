@@ -244,7 +244,8 @@ When enabled, a successful `POST /matches/{match_id}/analyze-live/auto` automati
 
 - `GET /watchlist` lists active watched matches and makes no Cito requests.
 - `DELETE /watchlist/{match_id}` stops watching a match while retaining its audit row.
-- `POST /watchlist/poll` fetches one Cito detail request per active watched match (up to 25 per call); it does not fetch the full live board.
+- `POST /watchlist/poll` fetches one Cito detail request per active watched match (up to 25 per call); it does not fetch the full live board. Never-checked and least-recently-checked matches are polled first so large lists do not starve older entries.
+- The dashboard exposes add/stop controls and a manual polling action. Polling is deliberately user-triggered in this release; no serverless background scheduler or recurring Cito quota spend is enabled.
 - Matches with an explicit terminal status returned by Cito are deactivated automatically.
 
 The watchlist is stored in the configured SQL database. This first version provides an explicit polling endpoint; it does not create a background scheduler. The feature flag is a rollback switch: set it to `false` or remove it to restore the prior application behavior. No production environment variable or deployment is changed by this PR.
