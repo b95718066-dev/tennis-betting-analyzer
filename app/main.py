@@ -718,7 +718,7 @@ async def preview_admin_history_sync(
     except ProviderHttpError as error:
         raise HTTPException(
             status_code=502,
-            detail=f"Historical provider request failed (HTTP {error.status_code or 'network error'}).",
+            detail=f"Historical provider request failed (HTTP {error.status_code or 'network error'}; code={error.error_code or 'unknown'}).",
         ) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
