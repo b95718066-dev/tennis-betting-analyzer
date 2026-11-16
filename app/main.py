@@ -1,6 +1,5 @@
 from typing import Any
 import os
-import re
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
@@ -22,7 +21,6 @@ from .data.normalization import normalize_cito_live_match
 from .data.providers.http import ProviderHttpError
 from .services.live_sync import persist_live_rows
 from .services.historical_sync import persist_historical_rows, player_history_features
-from .storage.models import HistoricalMatchSnapshot
 from .services.odds_sync import persist_odds_events
 from .services.live_value import analyze_stored_live_match
 from .services.pre_match_forecast import generate_pre_match_forecast, search_historical_players
@@ -784,7 +782,7 @@ async def get_player_historical_stats(
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory() as session:
             try:
-                return historical_player_stats(
+                return player_history_features(
                     session, player_id=player_id, before=before,
                     surface=surface, limit=limit,
                 )
