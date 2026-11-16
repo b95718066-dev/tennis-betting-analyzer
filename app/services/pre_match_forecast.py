@@ -27,7 +27,9 @@ def _cutoff(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _row_time(value: str | None) -> tuple[datetime | None, bool]:
+def _row_time(
+    value: str | None, provider: str,
+) -> tuple[datetime | None, bool]:
     if not value:
         return None, False
     try:
@@ -39,12 +41,14 @@ def _row_time(value: str | None) -> tuple[datetime | None, bool]:
             return None, False
         return datetime.combine(parsed_date, time.max, tzinfo=timezone.utc), True
     if parsed.tzinfo is None or parsed.utcoffset() is None:
+        if provider == "valuebetennis" and len(value.strip()) > 10:
+            return parsed.replace(tzinfo=timezone.utc), False
         return datetime.combine(parsed.date(), time.max, tzinfo=timezone.utc), True
     return parsed.astimezone(timezone.utc), False
 
 
-def _is_before(value: str | None, cutoff: datetime) -> bool:
-    parsed, date_only = _row_time(value)
+def _is_before(value: str | None, cutoff: datetime, provider: str) -> bool:
+    parsed, date_only = _row_time(value, provider)
     if parsed is None:
         return False
     if date_only:
@@ -82,6 +86,7 @@ def generate_pre_match_forecast(
     )
     statement = select(
         HistoricalMatchSnapshot.id,
+        HistoricalMatchSnapshot.provider,
         HistoricalMatchSnapshot.match_date,
         HistoricalMatchSnapshot.surface,
         HistoricalMatchSnapshot.player_1_id,
@@ -105,11 +110,11 @@ def generate_pre_match_forecast(
     rows = session.execute(statement.execution_options(yield_per=1000))
     eligible = [
         row for row in rows
-        if _is_before(row.match_date, cutoff)
+        if _is_before(row.match_date, cutoff, row.provider)
         and row.player_1_id != row.player_2_id
         and row.winner_id in {row.player_1_id, row.player_2_id}
     ]
-    eligible.sort(key=lambda row: (_row_time(row.match_date)[0], row.id))
+    eligible.sort(key=lambda row: (_row_time(row.match_date, row.provider)[0], row.id))
 
     histories: dict[str, list[dict[str, Any]]] = {
         player_1_id: [], player_2_id: [],
