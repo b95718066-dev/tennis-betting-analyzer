@@ -27,6 +27,7 @@ from .storage.models import HistoricalMatchSnapshot
 from .services.odds_sync import persist_odds_events
 from .services.live_value import analyze_stored_live_match
 from .services.pre_match_forecast import generate_pre_match_forecast, search_historical_players
+from .services.valuebetennis_import import import_valuebetennis_csv_chunk
 from .storage.database import build_engine, create_schema
 from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, SmartMatchWatchlist, TennisMatch
 from .storage.repository import save_odds_snapshot
@@ -758,6 +759,43 @@ async def preview_valuebetennis_link(
     pattern = rf"""href=["']([^"']*valuebetennis-matchs-{year}\.csv[^"']*)["']"""
     links = re.findall(pattern, response.text, flags=re.IGNORECASE)
     return {"year": year, "links": links[:5], "page_status": response.status_code}
+
+
+@app.get("/__preview_admin/valuebetennis-import", include_in_schema=False)
+async def preview_import_valuebetennis(
+    token: str = Query(min_length=32, max_length=128),
+    year: int = Query(ge=2021, le=2026),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20000, ge=1, le=20000),
+):
+    """Temporary token-gated importer into the isolated Preview database."""
+    expected = os.getenv("PREVIEW_HISTORY_SYNC_TOKEN")
+    if not expected or not __import__("secrets").compare_digest(token, expected):
+        raise HTTPException(status_code=404, detail="Not found.")
+    url = f"https://www.valuebetennis.com/datasets/valuebetennis-matchs-{year}.csv"
+    try:
+        async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            csv_text = response.content.decode("utf-8-sig")
+    except (httpx.HTTPError, UnicodeDecodeError) as error:
+        raise HTTPException(status_code=502, detail="Valuebetennis CSV download failed.") from error
+
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            try:
+                result = import_valuebetennis_csv_chunk(
+                    session, csv_text=csv_text, year=year, offset=offset, limit=limit,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+        result["download_bytes"] = len(response.content)
+        return result
+    finally:
+        engine.dispose()
 
 
 @app.post("/history/sync")
