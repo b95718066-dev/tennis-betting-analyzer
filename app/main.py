@@ -1,4 +1,5 @@
 from typing import Any
+import os
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
@@ -24,8 +25,9 @@ from .storage.models import HistoricalMatchSnapshot
 from .services.odds_sync import persist_odds_events
 from .services.live_value import analyze_stored_live_match
 from .storage.database import build_engine, create_schema
-from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, TennisMatch
+from .storage.models import OddsObservation, PredictionRecord, ProviderMatchLink, SmartMatchWatchlist, TennisMatch
 from .storage.repository import save_odds_snapshot
+from .services.smart_watchlist import list_watched_matches, unwatch_match, watch_match
 
 
 app = FastAPI(
@@ -74,6 +76,10 @@ class AutoLiveValueAnalysisRequest(BaseModel):
     bookmaker: str | None = Field(default=None, min_length=1, max_length=120)
     stake: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     auto_record: bool = True
+
+
+class WatchlistRequest(BaseModel):
+    match_id: str = Field(min_length=1, max_length=180)
 
 
 class PredictionJournalRequest(BaseModel):
@@ -590,6 +596,10 @@ async def analyze_live_match_value_auto(
             "combined_probability": None,
             "reason": "Signals remain separate until walk-forward calibration validates an ensemble.",
         }
+        if os.getenv("TENNIS_SMART_MATCH_WATCHLIST_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+            with factory.begin() as watch_session:
+                watch_match(watch_session, match_id, source="analyzed")
+            result["watchlist"] = {"enabled": True, "watching": True, "match_id": match_id}
         return result
     finally:
         engine.dispose()
@@ -1047,3 +1057,138 @@ async def backtest(request: BacktestRequest):
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+
+def _smart_watchlist_enabled() -> bool:
+    return os.getenv("TENNIS_SMART_MATCH_WATCHLIST_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _require_smart_watchlist() -> None:
+    if not _smart_watchlist_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart Match Watchlist is disabled. Set TENNIS_SMART_MATCH_WATCHLIST_ENABLED=true to enable it.",
+        )
+
+
+@app.get("/watchlist")
+async def get_smart_match_watchlist():
+    """List opted-in Cito matches without making any upstream provider requests."""
+    _require_smart_watchlist()
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            rows = list_watched_matches(session)
+            return {
+                "enabled": True,
+                "count": len(rows),
+                "matches": [
+                    {
+                        "match_id": row.external_match_id,
+                        "provider": row.provider,
+                        "source": row.source,
+                        "active": row.active,
+                        "last_status": row.last_status,
+                        "last_checked_at": row.last_checked_at.isoformat() if row.last_checked_at else None,
+                    }
+                    for row in rows
+                ],
+            }
+    finally:
+        engine.dispose()
+
+
+@app.post("/watchlist", status_code=201)
+async def add_smart_match_to_watchlist(request: WatchlistRequest):
+    """Explicitly add one Cito match to the monitored set."""
+    _require_smart_watchlist()
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            try:
+                row = watch_match(session, request.match_id, source="manual")
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            return {
+                "match_id": row.external_match_id,
+                "active": row.active,
+                "source": row.source,
+            }
+    finally:
+        engine.dispose()
+
+
+@app.delete("/watchlist/{match_id}")
+async def remove_smart_match_from_watchlist(match_id: str):
+    """Stop monitoring a match without deleting its audit history."""
+    _require_smart_watchlist()
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory.begin() as session:
+            removed = unwatch_match(session, match_id)
+            return {"match_id": match_id, "removed": removed}
+    finally:
+        engine.dispose()
+
+
+@app.post("/watchlist/poll")
+async def poll_smart_match_watchlist():
+    """Fetch details only for active watched matches; finished matches are retired."""
+    _require_smart_watchlist()
+    engine = build_engine()
+    try:
+        create_schema(engine)
+        factory = sessionmaker(bind=engine, expire_on_commit=False)
+        with factory() as session:
+            rows = list_watched_matches(session)
+            match_ids = [row.external_match_id for row in rows[:25]]
+        if not match_ids:
+            return {"checked": 0, "matches": [], "note": "No active watched matches; no Cito requests made."}
+
+        provider = _live_provider()
+        checked = []
+        terminal_statuses = {
+            "finished", "complete", "completed", "ended", "retired",
+            "walkover", "cancelled", "canceled", "abandoned",
+        }
+        for match_id in match_ids:
+            try:
+                payload = await provider.fetch_live_match_detail(match_id)
+                raw_status = str(
+                    payload.get("status") or payload.get("match_status") or ""
+                ).strip().lower()
+                is_terminal = raw_status in terminal_statuses
+                with factory.begin() as session:
+                    row = session.scalar(select(SmartMatchWatchlist).where(
+                        SmartMatchWatchlist.provider == "cito",
+                        SmartMatchWatchlist.external_match_id == match_id,
+                    ))
+                    if row is not None:
+                        row.last_status = raw_status or None
+                        row.last_checked_at = datetime.now(timezone.utc)
+                        if is_terminal:
+                            row.active = False
+                checked.append({
+                    "match_id": match_id,
+                    "status": raw_status or "unknown",
+                    "active": not is_terminal,
+                })
+            except (ProviderHttpError, ValueError):
+                checked.append({"match_id": match_id, "error": "provider_unavailable"})
+        return {
+            "checked": len(checked),
+            "matches": checked,
+            "remaining_unpolled": max(0, len(rows) - len(match_ids)),
+            "note": "One detail request per watched match; no full live-board request is made.",
+        }
+    finally:
+        engine.dispose()
