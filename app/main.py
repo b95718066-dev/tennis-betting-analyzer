@@ -234,38 +234,17 @@ async def sync_live_matches(
     except ValueError as error:
         raise HTTPException(status_code=502, detail="Live data provider returned an invalid response.") from error
 
-    tennis_odds_snapshots = []
-    odds_fetch_errors = []
-    if provider.name == "tennis_api":
-        for row in rows:
-            event_id = row.get("provider_event_id") or row.get("id")
-            if not event_id:
-                continue
-            try:
-                odds_payload = await provider.fetch_recent_odds(str(event_id), inplay=True)
-                tennis_odds_snapshots.extend(provider.normalize_recent_odds(
-                    odds_payload, event_id=str(event_id),
-                    player_1_name=(row.get("player1") or {}).get("name", "player_1"),
-                    player_2_name=(row.get("player2") or {}).get("name", "player_2"),
-                ))
-            except (ProviderHttpError, ValueError):
-                odds_fetch_errors.append(str(event_id))
-
     engine = build_engine()
     try:
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory.begin() as session:
             result = persist_live_rows(session, rows)
-            odds_result = persist_odds_snapshots(session, tennis_odds_snapshots, provider="tennis_api")
-        if provider.name == "tennis_api":
-            result["odds_sync"] = {
-                **odds_result,
-                "events_without_odds_response": len(odds_fetch_errors),
-                "event_ids_without_odds_response": odds_fetch_errors[:20],
-            }
-        else:
-            result["odds_sync"] = {"provider": "separate_odds_feed", "automatic_sync": False}
+        result["odds_sync"] = {
+            "provider": provider.name,
+            "automatic_sync": False,
+            "note": "Event odds are fetched on demand when a user requests analysis, to conserve API quota.",
+        }
         result["delay"] = getattr(provider, "last_live_metadata", {}).get("delayed")
         result["tour"] = tour.value if tour else "ALL"
         return result
