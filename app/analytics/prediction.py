@@ -7,11 +7,10 @@ and calibrates it on this project's own historical data.
 """
 from __future__ import annotations
 
-from math import exp, isfinite, log
+from math import exp, log
 from typing import Any
 
 from .elo import expected_probability
-from .form import calculate_form
 from .surface import analyze_surface
 from .h2h import analyze_h2h
 
