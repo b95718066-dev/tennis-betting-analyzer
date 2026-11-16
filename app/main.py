@@ -482,45 +482,48 @@ async def sync_tennis_odds(
 
 @app.get("/matches/{match_id}/odds")
 async def stored_match_odds(match_id: str):
-    """Return bookmaker snapshots linked to a canonical Cito match ID."""
+    """Return odds stored under the same Tennis API event ID or linked legacy odds."""
     engine = build_engine()
     try:
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory() as session:
-            links = session.scalars(
-                select(ProviderMatchLink).where(
-                    ProviderMatchLink.canonical_provider == "cito",
-                    ProviderMatchLink.canonical_external_id == match_id,
-                )
-            ).all()
-            event_ids = [link.source_external_id for link in links]
-            if not event_ids:
-                return {"match_id": match_id, "matched_odds_events": 0, "count": 0, "odds": []}
             observations = session.scalars(
                 select(OddsObservation)
                 .where(
-                    OddsObservation.provider == "the_odds_api",
-                    OddsObservation.external_match_id.in_(event_ids),
+                    OddsObservation.provider == "tennis_api",
+                    OddsObservation.external_match_id == match_id,
                 )
                 .order_by(OddsObservation.captured_at.desc())
             ).all()
+            event_ids = [match_id] if observations else []
+            if not observations:
+                links = session.scalars(select(ProviderMatchLink).where(
+                    ProviderMatchLink.canonical_provider == "cito",
+                    ProviderMatchLink.canonical_external_id == match_id,
+                    ProviderMatchLink.source_provider == "the_odds_api",
+                )).all()
+                event_ids = [link.source_external_id for link in links]
+                if event_ids:
+                    observations = session.scalars(
+                        select(OddsObservation)
+                        .where(
+                            OddsObservation.provider == "the_odds_api",
+                            OddsObservation.external_match_id.in_(event_ids),
+                        )
+                        .order_by(OddsObservation.captured_at.desc())
+                    ).all()
             return {
                 "match_id": match_id,
                 "matched_odds_events": len(event_ids),
                 "count": len(observations),
                 "odds": [
                     {
-                        "provider": item.provider,
-                        "external_match_id": item.external_match_id,
-                        "bookmaker": item.bookmaker,
-                        "market": item.market,
-                        "selection": item.selection,
-                        "odds_decimal": item.odds_decimal,
-                        "captured_at": item.captured_at.isoformat(),
-                        "is_live": item.is_live,
-                    }
-                    for item in observations
+                        "provider": item.provider, "external_match_id": item.external_match_id,
+                        "bookmaker": item.bookmaker, "market": item.market,
+                        "selection": item.selection, "odds_decimal": item.odds_decimal,
+                        "captured_at": item.captured_at.isoformat(), "is_live": item.is_live,
+                    } for item in observations
                 ],
             }
     finally:
