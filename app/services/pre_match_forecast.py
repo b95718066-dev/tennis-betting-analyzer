@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import String, cast, or_, select
 from sqlalchemy.orm import Session
 
 from app.analytics.historical_elo import historical_elo_ratings
@@ -177,16 +177,19 @@ def search_historical_players(
     if tour is not None and tour.upper() not in {"ATP", "WTA"}:
         raise ValueError("tour must be ATP or WTA.")
 
+    raw_text = cast(HistoricalMatchSnapshot.raw, String)
+    escaped_query = normalized_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     statement = select(HistoricalMatchSnapshot).where(
         HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
         HistoricalMatchSnapshot.player_1_id.is_not(None),
         HistoricalMatchSnapshot.player_2_id.is_not(None),
-    ).order_by(HistoricalMatchSnapshot.match_date.desc())
-    if tour:
-        statement = statement.where(HistoricalMatchSnapshot.tour == tour.upper())
+        raw_text.ilike(f"%{escaped_query}%", escape="\\"),
+    ).order_by(HistoricalMatchSnapshot.match_date.desc()).limit(5000)
+    matching_rows = session.scalars(statement).all()
+    sample_truncated = len(matching_rows) == 5000
 
     players: dict[str, dict[str, Any]] = {}
-    for row in session.scalars(statement).all():
+    for row in matching_rows:
         raw = row.raw if isinstance(row.raw, dict) else {}
         for side, player_id in ((1, row.player_1_id), (2, row.player_2_id)):
             key = f"player{side}"
@@ -219,4 +222,5 @@ def search_historical_players(
         "players": results,
         "source": "stored Cito and Valuebetennis historical match snapshots",
         "archive_note": "Search results combine Cito and Valuebetennis players already present in the local archive; source-prefixed IDs keep identities separate.",
+        "sample_truncated": sample_truncated,
     }
