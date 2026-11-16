@@ -375,37 +375,52 @@ async def odds_provider_diagnostics():
 
 @app.get("/odds/coverage")
 async def odds_coverage():
-    """Summarize persisted bookmaker coverage without exposing provider credentials."""
+    """Summarize saved odds by provider, including event-native Tennis API quotes."""
     engine = build_engine()
     try:
         create_schema(engine)
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory() as session:
-            rows = session.scalars(
-                select(OddsObservation).where(OddsObservation.provider == "the_odds_api")
-            ).all()
-            links = session.scalars(
-                select(ProviderMatchLink).where(
-                    ProviderMatchLink.source_provider == "the_odds_api",
-                    ProviderMatchLink.canonical_provider == "cito",
-                )
-            ).all()
-            latest = max((row.captured_at for row in rows), default=None)
-            age_seconds = None
-            if latest is not None:
-                if latest.tzinfo is None or latest.utcoffset() is None:
+            rows = session.scalars(select(OddsObservation)).all()
+            links = session.scalars(select(ProviderMatchLink)).all()
+            by_provider = {}
+            for row in rows:
+                item = by_provider.setdefault(row.provider, {
+                    "snapshots": 0, "events": set(), "bookmakers": set(), "markets": set(),
+                    "latest": None,
+                })
+                item["snapshots"] += 1
+                item["events"].add(row.external_match_id)
+                item["bookmakers"].add(row.bookmaker)
+                item["markets"].add(row.market)
+                if item["latest"] is None or row.captured_at > item["latest"]:
+                    item["latest"] = row.captured_at
+            summary = {}
+            for name, item in by_provider.items():
+                latest = item["latest"]
+                if latest is not None and (latest.tzinfo is None or latest.utcoffset() is None):
                     latest = latest.replace(tzinfo=timezone.utc)
-                age_seconds = round((datetime.now(timezone.utc) - latest.astimezone(timezone.utc)).total_seconds(), 1)
+                age = round((datetime.now(timezone.utc) - latest.astimezone(timezone.utc)).total_seconds(), 1) if latest else None
+                summary[name] = {
+                    "snapshots": item["snapshots"], "events": len(item["events"]),
+                    "bookmakers": sorted(item["bookmakers"]), "markets": sorted(item["markets"]),
+                    "latest_snapshot_at": latest.isoformat() if latest else None,
+                    "latest_snapshot_age_seconds": age,
+                    "fresh_within_15m": age is not None and -60 <= age <= 900,
+                }
+            primary = "tennis_api" if "tennis_api" in summary else "the_odds_api"
+            selected = summary.get(primary, {
+                "snapshots": 0, "events": 0, "bookmakers": [], "markets": [],
+                "latest_snapshot_at": None, "latest_snapshot_age_seconds": None,
+                "fresh_within_15m": False,
+            })
             return {
-                "provider": "the_odds_api",
-                "snapshots": len(rows),
-                "linked_events": len(links),
-                "bookmakers": sorted({row.bookmaker for row in rows}),
-                "markets": sorted({row.market for row in rows}),
-                "latest_snapshot_at": latest.isoformat() if latest else None,
-                "latest_snapshot_age_seconds": age_seconds,
-                "fresh_within_15m": age_seconds is not None and -60 <= age_seconds <= 900,
-                "note": "A linked event is not necessarily a complete two-sided market; live analysis checks that separately.",
+                "provider": primary, **selected,
+                "linked_events": selected.get("events", 0) if primary == "tennis_api" else sum(
+                    1 for link in links if link.source_provider == "the_odds_api"
+                ),
+                "providers": summary,
+                "note": "Tennis API odds use the same live event ID as the score; bookmaker availability and freshness are event-specific.",
             }
     finally:
         engine.dispose()
