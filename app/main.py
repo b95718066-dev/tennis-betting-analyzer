@@ -1189,9 +1189,30 @@ async def poll_smart_match_watchlist():
                     "active": still_active,
                     "finished": terminal,
                 })
-            except (ProviderHttpError, ValueError):
-                # Record the attempt so one broken provider ID does not monopolize
-                # every batch. Keep the prior status and active state unchanged.
+            except ProviderHttpError as error:
+                # Missing/retired provider IDs should not consume quota forever.
+                # Transient failures (429, timeout, 5xx) stay active and are retried.
+                not_found = error.status_code in {404, 410}
+                with factory.begin() as session:
+                    row = session.scalar(select(SmartMatchWatchlist).where(
+                        SmartMatchWatchlist.provider == "cito",
+                        SmartMatchWatchlist.external_match_id == match_id,
+                    ))
+                    if row is not None:
+                        row.last_checked_at = datetime.now(timezone.utc)
+                        if not_found:
+                            row.last_status = "not_found"
+                            row.active = False
+                        still_active = row.active
+                    else:
+                        still_active = False
+                checked.append({
+                    "match_id": match_id,
+                    "error": "match_not_found" if not_found else "provider_unavailable",
+                    "active": still_active,
+                })
+            except ValueError:
+                # A malformed response is not evidence that the match has ended.
                 with factory.begin() as session:
                     row = session.scalar(select(SmartMatchWatchlist).where(
                         SmartMatchWatchlist.provider == "cito",
@@ -1201,7 +1222,7 @@ async def poll_smart_match_watchlist():
                         row.last_checked_at = datetime.now(timezone.utc)
                 checked.append({
                     "match_id": match_id,
-                    "error": "provider_unavailable",
+                    "error": "invalid_provider_response",
                 })
         return {
             "checked": len(checked),
