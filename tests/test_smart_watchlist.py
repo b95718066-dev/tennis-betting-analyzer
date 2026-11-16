@@ -97,7 +97,6 @@ async def test_watchlist_poll_prioritizes_never_checked_and_retires_nested_termi
     monkeypatch, tmp_path,
 ):
     import httpx
-    from datetime import datetime, timezone
     import app.main as api
 
     db_path = tmp_path / "watchlist-poll.db"
@@ -108,7 +107,7 @@ async def test_watchlist_poll_prioritizes_never_checked_and_retires_nested_termi
     create_schema(engine)
     with Session(engine) as session, session.begin():
         recently_checked = watch_match(session, "cito-old-checked")
-        never_checked = watch_match(session, "cito-never-checked")
+        watch_match(session, "cito-never-checked")
         recently_checked.last_checked_at = datetime.now(timezone.utc)
     engine.dispose()
 
