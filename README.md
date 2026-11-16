@@ -186,14 +186,12 @@ Example request body:
 - This is the storage and feature foundation for walk-forward evaluation, not yet an automatically trained/retrained historical prediction model. The existing `/backtest` still evaluates supplied pre-generated predictions.
 
 
-## Sprint 13: historical serve and return aggregation
+## Sprint 13: historical player features (serve/return aggregation pending)
 
-- `GET /players/{player_id}/historical-stats?before=2026-06-01T12:00:00Z&surface=clay&limit=200` aggregates the player's stored Cito match-stat count pairs strictly before the exclusive cutoff.
-- Service-point and return-point rates are computed as summed numerators divided by summed denominators; match-level percentages and display strings are ignored.
-- Player-side mapping uses the stored Cito player IDs. Surface filtering is optional; all-court aggregation is used when omitted.
-- Each available service/return win metric includes a 95% Wilson interval and sample-size diagnostic. Missing or invalid count pairs and zero denominators remain unavailable.
+- `GET /players/{player_id}/historical-stats?before=2026-06-01T12:00:00Z&surface=clay&limit=200` currently returns Cito match-result features: matches considered, wins, losses and win rate, using only records before the exclusive cutoff.
+- The route does **not** currently aggregate historical serve-point or return-point count pairs. It does not infer those rates from match wins or percentages. The endpoint description and response limitations reflect this distinction.
 - Date-only rows from the cutoff calendar day are excluded. Timestamped rows must be strictly earlier than the cutoff.
-- This endpoint is descriptive historical evidence only. It does not silently blend historical rates into the live model; any shrinkage or weighting requires separate chronological validation.
+- Next step: implement player-side mapping and numerator/denominator aggregation from verified Cito historical stat payloads, then add sample-size confidence intervals and chronological validation before any live-model integration.
 
 
 ## Sprint 14: historical Elo replay
