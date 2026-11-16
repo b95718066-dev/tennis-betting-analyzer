@@ -301,7 +301,12 @@ def walk_forward_historical_elo(
                     }
                     if closing_1 is not None and closing_2 is not None:
                         paired_closing_odds += 1
-                        overround = 1.0 / closing_1 + 1.0 / closing_2 - 1.0
+                        implied_1 = 1.0 / closing_1
+                        implied_2 = 1.0 / closing_2
+                        implied_total = implied_1 + implied_2
+                        overround = implied_total - 1.0
+                        market_fair_1 = implied_1 / implied_total
+                        market_fair_2 = implied_2 / implied_total
                         closing_overround_sum += overround
                         ev_1 = probability * closing_1 - 1.0
                         ev_2 = (1.0 - probability) * closing_2 - 1.0
@@ -309,6 +314,14 @@ def walk_forward_historical_elo(
                             "player_1": closing_1,
                             "player_2": closing_2,
                             "market_overround": round(overround, 6),
+                            "market_probability_without_margin": {
+                                "player_1": round(market_fair_1, 6),
+                                "player_2": round(market_fair_2, 6),
+                            },
+                            "model_probability_edge": {
+                                "player_1": round(probability - market_fair_1, 6),
+                                "player_2": round((1.0 - probability) - market_fair_2, 6),
+                            },
                             "model_ev_player_1": round(ev_1, 6),
                             "model_ev_player_2": round(ev_2, 6),
                         }
