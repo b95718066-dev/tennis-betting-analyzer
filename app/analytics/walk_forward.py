@@ -18,7 +18,10 @@ from app.analytics.historical_elo import MIN_SURFACE_MATCHES, SURFACE_WEIGHT, VA
 from app.storage.models import HistoricalMatchSnapshot
 
 
-def _parse_match_date(value: str | None) -> tuple[datetime | None, bool]:
+def _parse_match_date(
+    value: str | None, provider: str,
+) -> tuple[datetime | None, bool]:
+    """Parse source timestamps; Valuebetennis documents naive CSV datetimes as UTC."""
     if not value:
         return None, False
     try:
@@ -30,8 +33,20 @@ def _parse_match_date(value: str | None) -> tuple[datetime | None, bool]:
             return None, False
         return datetime.combine(day, time.max, tzinfo=timezone.utc), True
     if parsed.tzinfo is None or parsed.utcoffset() is None:
+        if provider == "valuebetennis" and len(value.strip()) > 10:
+            return parsed.replace(tzinfo=timezone.utc), False
         return datetime.combine(parsed.date(), time.max, tzinfo=timezone.utc), True
     return parsed.astimezone(timezone.utc), False
+
+
+def _parse_decimal_odds(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        odds = float(str(value).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    return odds if 1.0 < odds < 1000.0 else None
 
 
 def _effective_rating(pid: str, surface: str, overall: dict[str, float],
@@ -109,7 +124,7 @@ def _score_probabilities(rows: list[tuple[float, bool]]) -> dict[str, float] | N
 def walk_forward_historical_elo(
     session: Session, *, surface: str | None = None,
     min_training_matches: int = 10, calibration_bins: int = 10,
-    k_factor: float = DEFAULT_K_FACTOR,
+    k_factor: float = DEFAULT_K_FACTOR, min_ev: float = 0.03,
 ) -> dict[str, Any]:
     """Predict timestamped historical matches before updating ratings with outcomes."""
     if surface is not None and surface.lower() not in VALID_SURFACES:
@@ -118,27 +133,61 @@ def walk_forward_historical_elo(
         raise ValueError("min_training_matches must be a positive integer.")
     if not isinstance(calibration_bins, int) or not 2 <= calibration_bins <= 50:
         raise ValueError("calibration_bins must be between 2 and 50.")
-    rows = session.scalars(select(HistoricalMatchSnapshot).where(
-        HistoricalMatchSnapshot.provider == "cito",
+    if not isinstance(min_ev, (int, float)) or not 0 <= min_ev <= 1:
+        raise ValueError("min_ev must be between 0 and 1.")
+
+    statement = select(
+        HistoricalMatchSnapshot.id,
+        HistoricalMatchSnapshot.provider,
+        HistoricalMatchSnapshot.external_id,
+        HistoricalMatchSnapshot.match_date,
+        HistoricalMatchSnapshot.winner_id,
+        HistoricalMatchSnapshot.player_1_id,
+        HistoricalMatchSnapshot.player_2_id,
+        HistoricalMatchSnapshot.surface,
+        HistoricalMatchSnapshot.raw,
+    ).where(
+        HistoricalMatchSnapshot.provider.in_(["cito", "valuebetennis"]),
         HistoricalMatchSnapshot.match_date.is_not(None),
         HistoricalMatchSnapshot.winner_id.is_not(None),
         HistoricalMatchSnapshot.player_1_id.is_not(None),
         HistoricalMatchSnapshot.player_2_id.is_not(None),
-    )).all()
+    ).order_by(
+        HistoricalMatchSnapshot.match_date.asc(),
+        HistoricalMatchSnapshot.id.asc(),
+    )
+    rows = session.execute(statement.execution_options(yield_per=5000))
 
     usable = []
     invalid = 0
+    source_rows: dict[str, int] = defaultdict(int)
     for row in rows:
-        parsed, date_only = _parse_match_date(row.match_date)
-        if parsed is None or row.winner_id not in {row.player_1_id, row.player_2_id} or row.player_1_id == row.player_2_id:
+        source_rows[row.provider] += 1
+        parsed, date_only = _parse_match_date(row.match_date, row.provider)
+        if (
+            parsed is None
+            or row.winner_id not in {row.player_1_id, row.player_2_id}
+            or row.player_1_id == row.player_2_id
+        ):
             invalid += 1
             continue
-        row_surface = (row.surface or "").lower()
-        if surface and row_surface != surface.lower():
-            continue
+        row_surface = (row.surface or "").strip().lower()
         if row_surface not in VALID_SURFACES:
             row_surface = "unknown"
-        usable.append((parsed, date_only, row.id, row, row_surface))
+        raw = row.raw if isinstance(row.raw, dict) else {}
+        closing_1 = (
+            _parse_decimal_odds(raw.get("closing_odds_player_1") or raw.get("cote1_cloture"))
+            if row.provider == "valuebetennis" else None
+        )
+        closing_2 = (
+            _parse_decimal_odds(raw.get("closing_odds_player_2") or raw.get("cote2_cloture"))
+            if row.provider == "valuebetennis" else None
+        )
+        usable.append((
+            parsed, date_only, row.id, row.provider, row.external_id,
+            row.player_1_id, row.player_2_id, row.winner_id, row_surface,
+            closing_1, closing_2,
+        ))
     usable.sort(key=lambda item: (item[0], item[1], item[2]))
 
     overall: dict[str, float] = {}
