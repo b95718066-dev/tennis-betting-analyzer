@@ -17,6 +17,9 @@ class ProviderSettings:
     odds_api_base_url: str | None = None
     odds_api_regions: str = "eu"
     odds_api_markets: str = "h2h,spreads,totals"
+    tennis_api_key: str | None = None
+    tennis_api_host: str = "tennis-api-atp-wta-itf.p.rapidapi.com"
+    tennis_api_base_url: str | None = None
     timeout_seconds: float = 15.0
 
     @classmethod
@@ -36,6 +39,9 @@ class ProviderSettings:
             odds_api_base_url=os.getenv("THE_ODDS_API_BASE_URL") or None,
             odds_api_regions=os.getenv("THE_ODDS_API_REGIONS", "eu"),
             odds_api_markets=os.getenv("THE_ODDS_API_MARKETS", "h2h,spreads,totals"),
+            tennis_api_key=os.getenv("TENNIS_API_KEY") or None,
+            tennis_api_host=os.getenv("TENNIS_API_HOST", "tennis-api-atp-wta-itf.p.rapidapi.com"),
+            tennis_api_base_url=os.getenv("TENNIS_API_BASE_URL") or None,
             timeout_seconds=timeout,
         )
 
@@ -47,6 +53,14 @@ def build_live_provider(settings: ProviderSettings | None = None):
     settings = settings or ProviderSettings.from_env()
     if settings.live_provider == "none":
         return None
+    if settings.live_provider == "tennis_api":
+        from app.data.providers.tennis_api import TennisApiProvider
+        return TennisApiProvider(
+            api_key=settings.tennis_api_key,
+            host=settings.tennis_api_host,
+            base_url=settings.tennis_api_base_url,
+            timeout_seconds=settings.timeout_seconds,
+        )
     if settings.live_provider == "cito":
         return CitoTennisProvider(
             api_key=settings.api_key,
@@ -64,6 +78,14 @@ def build_odds_provider(settings: ProviderSettings | None = None):
     settings = settings or ProviderSettings.from_env()
     if settings.odds_provider == "none":
         return None
+    if settings.odds_provider == "tennis_api":
+        from app.data.providers.tennis_api import TennisApiProvider
+        return TennisApiProvider(
+            api_key=settings.tennis_api_key,
+            host=settings.tennis_api_host,
+            base_url=settings.tennis_api_base_url,
+            timeout_seconds=settings.timeout_seconds,
+        )
     if settings.odds_provider == "the_odds_api":
         return TheOddsApiProvider(
             api_key=settings.odds_api_key,
