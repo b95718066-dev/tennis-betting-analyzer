@@ -1,0 +1,12 @@
+{
+  "sets_player_1": 0,
+  "sets_player_2": 0,
+  "games_player_1": 3,
+  "games_player_2": 2,
+  "points_player_1": 2,
+  "points_player_2": 1,
+  "server": 1,
+  "best_of": 3,
+  "player_1_serve_point_win": 0.67,
+  "player_2_serve_point_win": 0.64
+}
