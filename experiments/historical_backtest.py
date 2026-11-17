@@ -368,7 +368,10 @@ def run_historical_markov(session: Session) -> dict[str, Any]:
             ):
                 skipped_unknown_time += 1
                 continue
-            best_of = raw.get("best_of")
+            try:
+                best_of = int(raw.get("best_of"))
+            except (TypeError, ValueError):
+                continue
             if best_of not in (3, 5):
                 continue
             p1, p2 = row.player_1_id, row.player_2_id
