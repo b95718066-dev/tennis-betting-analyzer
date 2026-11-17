@@ -22,3 +22,9 @@ result = calculate_clv(
 ```
 
 Do not compare a bookmaker's entry price with an exchange close or a different market definition without explicitly recording that difference.
+
+Run the illustrative example:
+
+```bash
+python experiments/model_03_clv_lab/example.py
+```
