@@ -208,14 +208,17 @@ def run_market_anchored_and_clv(session: Session) -> dict[str, Any]:
                     date_only_rows += 1
 
             if opening_1 and opening_2 and closing_1 and closing_2:
-                try:
-                    clv_rows.append(calculate_clv(
-                        entry_odds={"p1": opening_1, "p2": opening_2},
-                        closing_odds={"p1": closing_1, "p2": closing_2},
-                        selection="p1" if winner == p1 else "p2",
-                    ))
-                except ValueError:
-                    continue
+                # No betting selection log exists for these archive records. Measure
+                # both sides independently; never select the eventual winner retrospectively.
+                for selection in ("p1", "p2"):
+                    try:
+                        clv_rows.append(calculate_clv(
+                            entry_odds={"p1": opening_1, "p2": opening_2},
+                            closing_odds={"p1": closing_1, "p2": closing_2},
+                            selection=selection,
+                        ))
+                    except ValueError:
+                        continue
 
         # Apply outcomes only after every match for the date has been scored.
         for player_id, delta in overall_delta.items():
@@ -304,14 +307,15 @@ def _summarize_clv(rows: list[dict[str, float]]) -> dict[str, Any] | None:
     odds = [float(row["odds_clv"]) for row in rows]
     beat = sum(bool(row["beat_closing_price"]) for row in rows)
     return {
-        "matches": len(rows),
+        "selection_observations": len(rows),
+        "match_pairs": len(rows) // 2,
         "mean_probability_clv": sum(probability) / len(probability),
         "median_probability_clv": median(probability),
         "mean_odds_clv": sum(odds) / len(odds),
         "median_odds_clv": median(odds),
         "beat_closing_price_rate": beat / len(rows),
         "positive_probability_clv_count": sum(value > 0 for value in probability),
-        "method": "de-vigged opening and closing prices from the same archived match row",
+        "method": "both outcomes measured independently using de-vigged opening and closing prices from the same archived match row; no retrospective winner selection",
         "timestamp_validation": "not_verified",
     }
 
