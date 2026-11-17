@@ -42,3 +42,9 @@ probability = model.predict_probability({
 ```
 
 The model exposes coefficients for inspection. It deliberately does not choose a betting threshold or claim positive expected value.
+
+Run the synthetic smoke example (not real tennis data):
+
+```bash
+python experiments/model_01_market_anchored/example.py
+```
