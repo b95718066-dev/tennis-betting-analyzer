@@ -47,3 +47,23 @@ The experiment code here is independently written for this repository; it does n
 - The Markov runner calls our own existing implementation in `app/analytics/live_probability.py`.
 
 The historical data and odds have their own licenses and provenance requirements. This folder intentionally contains no copied datasets, trained weights, credentials, or third-party binaries.
+
+## Connect to the isolated historical database
+
+The repository now includes a read-only runner for the isolated Neon Preview archive:
+
+```bash
+# Put the isolated Preview DATABASE_URL in .env (never Production)
+python experiments/run_historical.py
+```
+
+The runner performs SELECT-only queries and writes no database rows. It returns:
+- Market-anchored logistic correction vs the de-vigged Valuebetennis opening-market baseline, using a 60/40 chronological split by unique calendar dates.
+- Pre-match Markov evaluation on Cito matches with a known scheduled start and enough earlier-day serve-point history. Same-day statistics are not used.
+- Descriptive opening-vs-closing CLV for both outcomes, not winner-selected bets.
+
+The current Preview archive has approximately 481,897 ATP/WTA historical results (Valuebetennis plus Cito). Valuebetennis has paired opening odds on about 233k rows and paired closing odds on about 185k rows. These prices have no verified capture timestamps/bookmaker identity in the imported archive, so the runner explicitly does **not** report betting ROI or claim executable CLV.
+
+Cito has a much smaller recent archive with 1,958 rows marked as having match statistics. Markov results may therefore have a small usable sample after requiring earlier-day service history. The report includes actual sample counts and will report an insufficient-sample status rather than invent inputs.
+
+Use only the isolated Preview connection string. Do not copy a Production credential into this workflow.
